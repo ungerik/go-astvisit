@@ -7,15 +7,6 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
-type cursor struct {
-	*astutil.Cursor
-	path Path
-}
-
-func (c *cursor) Path() Path {
-	return c.path
-}
-
 func Visit(root ast.Node, pre, post Visitor) (result ast.Node) {
 	path := make(Path, 0, 16)
 	preApply := func(c *astutil.Cursor) bool {
@@ -209,4 +200,47 @@ func visitNode(visitor Visitor, cursor Cursor) bool {
 	}
 
 	panic(fmt.Sprintf("unknown ast.Node type %T", cursor.Node()))
+}
+
+// cursor implements the Cursor inteface by
+// wrapping an astutil.Cursor together with a Path.
+type cursor struct {
+	cursor *astutil.Cursor
+	path   Path
+}
+
+func (c *cursor) Path() Path {
+	return c.path
+}
+
+func (c *cursor) Node() ast.Node {
+	return c.cursor.Node()
+}
+
+func (c *cursor) Parent() ast.Node {
+	return c.cursor.Parent()
+}
+
+func (c *cursor) ParentField() string {
+	return c.cursor.Name()
+}
+
+func (c *cursor) ParentFieldIndex() int {
+	return c.cursor.Index()
+}
+
+func (c *cursor) Replace(n ast.Node) {
+	c.cursor.Replace(n)
+}
+
+func (c *cursor) Delete() {
+	c.cursor.Delete()
+}
+
+func (c *cursor) InsertAfter(n ast.Node) {
+	c.cursor.InsertAfter(n)
+}
+
+func (c *cursor) InsertBefore(n ast.Node) {
+	c.cursor.InsertBefore(n)
 }

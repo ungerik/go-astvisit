@@ -7,19 +7,20 @@ import (
 )
 
 type PathItem struct {
-	Name  string
-	Index int
-	Node  ast.Node
-	Type  string
+	ParentField      string
+	ParentFieldIndex int
+
+	Node ast.Node
+	Type string
 }
 
 func (item *PathItem) writeTo(b *strings.Builder) {
-	if item.Name != "" {
+	if item.ParentField != "" {
 		b.WriteByte('.')
-		b.WriteString(item.Name)
-		if item.Index >= 0 {
+		b.WriteString(item.ParentField)
+		if item.ParentFieldIndex >= 0 {
 			b.WriteByte('[')
-			b.WriteString(strconv.Itoa(item.Index))
+			b.WriteString(strconv.Itoa(item.ParentFieldIndex))
 			b.WriteByte(']')
 		}
 	}

@@ -11,16 +11,16 @@ type Cursor interface {
 	// Parent returns the parent of the current Node.
 	Parent() ast.Node
 
-	// Name returns the name of the parent Node field that contains the current Node.
-	// If the parent is a *ast.Package and the current Node is a *ast.File, Name returns
+	// ParentField returns the name of the parent Node field that contains the current Node.
+	// If the parent is a *ast.Package and the current Node is a *ast.File, ParentField returns
 	// the filename for the current Node.
-	Name() string
+	ParentField() string
 
-	// Index reports the index >= 0 of the current Node in the slice of Nodes that
+	// ParentFieldIndex reports the index >= 0 of the current Node in the slice of Nodes that
 	// contains it, or a value < 0 if the current Node is not part of a slice.
 	// The index of the current node changes if InsertBefore is called while
 	// processing the current node.
-	Index() int
+	ParentFieldIndex() int
 
 	// Replace replaces the current Node with n.
 	// The replacement node is not walked by Apply.

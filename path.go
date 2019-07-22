@@ -7,25 +7,18 @@ import (
 
 type Path []PathItem
 
-func (s *Path) push(name string, index int, node ast.Node) {
-	if len(*s) == 0 {
-		*s = append(*s,
-			PathItem{
-				Node: node,
-				Type: NodeType(node),
-			},
-		)
-		return
+func (s *Path) push(parentField string, parentFieldIndex int, node ast.Node) {
+	item := PathItem{
+		Node: node,
+		Type: NodeType(node),
 	}
 
-	*s = append(*s,
-		PathItem{
-			Name:  name,
-			Index: index,
-			Node:  node,
-			Type:  NodeType(node),
-		},
-	)
+	if len(*s) > 0 {
+		item.ParentField = parentField
+		item.ParentFieldIndex = parentFieldIndex
+	}
+
+	*s = append(*s, item)
 }
 
 func (s *Path) pop() {
