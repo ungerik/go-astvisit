@@ -1,10 +1,15 @@
 package astvisit
 
 import (
+	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // ParseDeclarations either from a complete source file
@@ -42,6 +47,66 @@ func ParseStatements(fset *token.FileSet, src string) ([]ast.Stmt, error) {
 		return nil, err
 	}
 	return file.Decls[0].(*ast.FuncDecl).Body.List, nil
+}
+
+type PackageLocation struct {
+	Package    string
+	SourcePath string
+	Std        bool
+}
+
+func LocatePackage(projectDir, importPath string) (*PackageLocation, error) {
+	if len(importPath) >= 2 && importPath[0] == '"' && importPath[len(importPath)-1] == '"' {
+		importPath = importPath[1 : len(importPath)-1]
+	}
+	config := packages.Config{
+		Mode: packages.NeedName + packages.NeedFiles,
+		Dir:  projectDir,
+	}
+	pkgs, err := packages.Load(&config, importPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(pkgs) == 0 {
+		return nil, fmt.Errorf("could not load importPath %q for projectDir %q", importPath, projectDir)
+	}
+	return &PackageLocation{
+		Package:    pkgs[0].Name,
+		SourcePath: filepath.Dir(pkgs[0].GoFiles[0]),
+		Std:        strings.HasPrefix(pkgs[0].GoFiles[0], build.Default.GOROOT),
+	}, nil
+}
+
+func ImportLineInfo(projectDir, importLine string) (importName string, loc *PackageLocation, err error) {
+	importLine = strings.TrimPrefix(importLine, "import")
+	begQuote := strings.IndexByte(importLine, '"')
+	endQuote := strings.LastIndexByte(importLine, '"')
+	if begQuote == -1 || begQuote == endQuote {
+		return "", nil, fmt.Errorf("invalid quoted import: %s", importLine)
+	}
+	importPath := importLine[begQuote+1 : endQuote]
+
+	loc, err = LocatePackage(projectDir, importPath)
+	if err != nil {
+		return "", nil, err
+	}
+	importName = strings.TrimSpace(importLine[:begQuote])
+	if importName == "" {
+		importName = loc.Package
+	}
+	return importName, loc, nil
+}
+
+func ImportSpecInfo(projectDir string, importSpec *ast.ImportSpec) (importName string, loc *PackageLocation, err error) {
+	loc, err = LocatePackage(projectDir, importSpec.Path.Value)
+	if err != nil {
+		return "", nil, err
+	}
+	importName = ExprString(importSpec.Name)
+	if importName == "" {
+		importName = loc.Package
+	}
+	return importName, loc, nil
 }
 
 // // EnumPackageGoFiles enums the path of all non test .go files of a package via callback.
