@@ -13,6 +13,9 @@ func ExprString(expr ast.Expr) string {
 	case *ast.BadExpr:
 		return ""
 	case *ast.Ident:
+		if e == nil {
+			return ""
+		}
 		return e.Name
 	case *ast.Ellipsis:
 		return "..." + ExprString(e.Elt)
@@ -57,12 +60,11 @@ func ExprString(expr ast.Expr) string {
 	case *ast.StructType:
 		var b strings.Builder
 		b.WriteString("struct {")
-		b.WriteString("{ ")
 		for i, field := range e.Fields.List {
 			if i > 0 {
 				b.WriteString("; ")
 			}
-			b.WriteString(ExprString(field))
+			b.WriteString(FieldString(field))
 		}
 		b.WriteString(" }")
 		return b.String()
@@ -71,12 +73,11 @@ func ExprString(expr ast.Expr) string {
 	case *ast.InterfaceType:
 		var b strings.Builder
 		b.WriteString("interface {")
-		b.WriteString("{ ")
-		for i, field := range e.Methods.List {
+		for i, method := range e.Methods.List {
 			if i > 0 {
 				b.WriteString("; ")
 			}
-			b.WriteString(ExprString(field))
+			b.WriteString(FieldString(method))
 		}
 		b.WriteString(" }")
 		return b.String()
@@ -98,6 +99,25 @@ func ExprString(expr ast.Expr) string {
 	default:
 		panic(fmt.Sprintf("TODO %#v", expr))
 	}
+}
+
+func FieldString(field *ast.Field) string {
+	var b strings.Builder
+	if len(field.Names) > 0 {
+		for i, name := range field.Names {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(ExprString(name))
+		}
+		b.WriteByte(' ')
+	}
+	b.WriteString(ExprString(field.Type))
+	if field.Tag != nil {
+		b.WriteByte(' ')
+		b.WriteString(ExprString(field.Tag))
+	}
+	return b.String()
 }
 
 func FuncTypeString(functype *ast.FuncType) string {
