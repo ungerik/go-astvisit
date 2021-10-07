@@ -34,8 +34,8 @@ func (s Path) Last() PathItem {
 
 func (s Path) String() string {
 	b := strings.Builder{}
-	for i := range s {
-		s[i].writeTo(&b)
+	for _, item := range s {
+		item.writeTo(&b)
 	}
 	return b.String()
 }
