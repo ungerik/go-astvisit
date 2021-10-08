@@ -24,6 +24,9 @@ func ExprString(expr ast.Expr) string {
 	case *ast.FuncLit:
 		return "func" + FuncTypeString(e.Type) + "{ TODO ast.FuncLit.Body }"
 	case *ast.CompositeLit:
+		if len(e.Elts) == 0 {
+			return ExprString(e.Type) + "{}"
+		}
 		var b strings.Builder
 		b.WriteString(ExprString(e.Type))
 		b.WriteString("{ ")
@@ -50,6 +53,9 @@ func ExprString(expr ast.Expr) string {
 	case *ast.StarExpr:
 		return "*" + ExprString(e.X)
 	case *ast.UnaryExpr:
+		if e.OpPos == e.Pos() {
+			return e.Op.String() + ExprString(e.X)
+		}
 		return ExprString(e.X) + e.Op.String()
 	case *ast.BinaryExpr:
 		return ExprString(e.X) + " " + e.Op.String() + " " + ExprString(e.Y)
@@ -58,8 +64,11 @@ func ExprString(expr ast.Expr) string {
 	case *ast.ArrayType:
 		return "[" + ExprString(e.Len) + "]" + ExprString(e.Elt)
 	case *ast.StructType:
+		if e.Fields.NumFields() == 0 {
+			return "struct{}"
+		}
 		var b strings.Builder
-		b.WriteString("struct {")
+		b.WriteString("struct { ")
 		for i, field := range e.Fields.List {
 			if i > 0 {
 				b.WriteString("; ")
@@ -71,6 +80,9 @@ func ExprString(expr ast.Expr) string {
 	case *ast.FuncType:
 		return "func" + FuncTypeString(e)
 	case *ast.InterfaceType:
+		if e.Methods.NumFields() == 0 {
+			return "interface{}"
+		}
 		var b strings.Builder
 		b.WriteString("interface {")
 		for i, method := range e.Methods.List {
@@ -97,7 +109,7 @@ func ExprString(expr ast.Expr) string {
 			return "chan " + ExprString(e.Value)
 		}
 	default:
-		panic(fmt.Sprintf("TODO %#v", expr))
+		return fmt.Sprintf("TODO %T", expr)
 	}
 }
 
