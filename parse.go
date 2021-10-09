@@ -10,15 +10,23 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"golang.org/x/tools/go/packages"
 )
+
+var fileCounter uint32
+
+func nextFileName() string {
+	c := atomic.AddUint32(&fileCounter, 1)
+	return fmt.Sprintf("file%d.go", c)
+}
 
 // ParseDeclarations either from a complete source file
 // or from a code snippet without a package clause.
 func ParseDeclarations(fset *token.FileSet, src string) ([]ast.Decl, []*ast.CommentGroup, error) {
 	// Try as whole source file.
-	file, err := parser.ParseFile(fset, "", src, parser.ParseComments)
+	file, err := parser.ParseFile(fset, nextFileName(), src, parser.ParseComments)
 	if err == nil {
 		return file.Decls, file.Comments, nil
 	}
@@ -44,7 +52,7 @@ func ParseDeclarations(fset *token.FileSet, src string) ([]ast.Decl, []*ast.Comm
 // ParseStatements a from a code snippet
 func ParseStatements(fset *token.FileSet, src string) ([]ast.Stmt, []*ast.CommentGroup, error) {
 	fsrc := "package p; func _() { " + src + "\n\n}"
-	file, err := parser.ParseFile(fset, "", fsrc, parser.ParseComments)
+	file, err := parser.ParseFile(fset, nextFileName(), fsrc, parser.ParseComments)
 	if err != nil {
 		return nil, nil, err
 	}
