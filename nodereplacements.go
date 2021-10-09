@@ -8,33 +8,56 @@ import (
 	"sort"
 )
 
-type NodeReplacement struct {
+type NodeReplacements []struct {
 	Node        ast.Node
 	Replacement interface{} // nil, string, []byte, or anything accepted by format.Node
 }
 
-func SortNodeReplacements(replacements []NodeReplacement) {
-	sort.Slice(replacements, func(i, j int) bool { return replacements[i].Node.Pos() < replacements[j].Node.Pos() })
+func (repls *NodeReplacements) AddReplacement(node ast.Node, replacement interface{}) {
+	*repls = append(*repls, struct {
+		Node        ast.Node
+		Replacement interface{}
+	}{
+		Node:        node,
+		Replacement: replacement,
+	})
 }
 
-func ReplaceNodes(fset *token.FileSet, source []byte, replacements []NodeReplacement) ([]byte, error) {
-	SortNodeReplacements(replacements)
+func (repls *NodeReplacements) AddRemoval(node ast.Node) {
+	*repls = append(*repls, struct {
+		Node        ast.Node
+		Replacement interface{}
+	}{
+		Node: node,
+	})
+}
+
+func (repls *NodeReplacements) Add(other NodeReplacements) {
+	*repls = append(*repls, other...)
+}
+
+func (repls NodeReplacements) Sort() {
+	sort.Slice(repls, func(i, j int) bool { return repls[i].Node.Pos() < repls[j].Node.Pos() })
+}
+
+func (repls NodeReplacements) Apply(fset *token.FileSet, source []byte) ([]byte, error) {
+	repls.Sort()
 	var (
 		err       error
 		buf       bytes.Buffer
 		sourcePos = 0
 	)
-	for _, nr := range replacements {
-		pos := fset.Position(nr.Node.Pos()).Offset
-		end := fset.Position(nr.Node.End()).Offset
+	for _, repl := range repls {
+		pos := fset.Position(repl.Node.Pos()).Offset
+		end := fset.Position(repl.Node.End()).Offset
 		gap := source[sourcePos:pos]
-		if nr.Replacement != nil || containsNonSpace(gap) {
+		if repl.Replacement != nil || containsNonSpace(gap) {
 			_, err = buf.Write(gap)
 			if err != nil {
 				return nil, err
 			}
 		}
-		switch r := nr.Replacement.(type) {
+		switch r := repl.Replacement.(type) {
 		case nil:
 			// If a removed node ends with a newline remove that too
 			// so that all node lines get removed
