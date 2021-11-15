@@ -149,7 +149,7 @@ func FuncTypeString(functype *ast.FuncType) string {
 		b.WriteString(ExprString(field.Type))
 	}
 	b.WriteByte(')')
-	if len(functype.Results.List) == 0 {
+	if functype.Results == nil || len(functype.Results.List) == 0 {
 		return b.String()
 	}
 	b.WriteByte(' ')
