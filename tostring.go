@@ -132,10 +132,10 @@ func FieldString(field *ast.Field) string {
 	return b.String()
 }
 
-func FuncTypeString(functype *ast.FuncType) string {
+func FuncTypeString(funcType *ast.FuncType) string {
 	var b strings.Builder
 	b.WriteByte('(')
-	for fieldIndex, field := range functype.Params.List {
+	for fieldIndex, field := range funcType.Params.List {
 		if fieldIndex > 0 {
 			b.WriteString(", ")
 		}
@@ -149,16 +149,16 @@ func FuncTypeString(functype *ast.FuncType) string {
 		b.WriteString(ExprString(field.Type))
 	}
 	b.WriteByte(')')
-	if functype.Results == nil || len(functype.Results.List) == 0 {
+	if funcType.Results == nil || len(funcType.Results.List) == 0 {
 		return b.String()
 	}
 	b.WriteByte(' ')
-	if len(functype.Results.List) == 1 && len(functype.Results.List[0].Names) == 0 {
-		b.WriteString(ExprString(functype.Results.List[0].Type))
+	if len(funcType.Results.List) == 1 && len(funcType.Results.List[0].Names) == 0 {
+		b.WriteString(ExprString(funcType.Results.List[0].Type))
 		return b.String()
 	}
 	b.WriteByte('(')
-	for fieldIndex, field := range functype.Results.List {
+	for fieldIndex, field := range funcType.Results.List {
 		if fieldIndex > 0 {
 			b.WriteString(", ")
 		}
