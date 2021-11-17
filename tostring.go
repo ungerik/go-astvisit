@@ -7,6 +7,14 @@ import (
 )
 
 func ExprString(expr ast.Expr) string {
+	return exprString(expr, "")
+}
+
+func ExprStringWithExportedNameQualifyer(expr ast.Expr, qualifyer string) string {
+	return exprString(expr, qualifyer)
+}
+
+func exprString(expr ast.Expr, qualifyer string) string {
 	switch e := expr.(type) {
 	case nil:
 		return ""
@@ -16,53 +24,56 @@ func ExprString(expr ast.Expr) string {
 		if e == nil {
 			return ""
 		}
+		if qualifyer != "" && e.IsExported() {
+			return qualifyer + "." + e.Name
+		}
 		return e.Name
+	case *ast.SelectorExpr:
+		return exprString(e.X, "") + "." + e.Sel.Name
 	case *ast.Ellipsis:
-		return "..." + ExprString(e.Elt)
+		return "..." + exprString(e.Elt, qualifyer)
 	case *ast.BasicLit:
 		return e.Value
 	case *ast.FuncLit:
 		return "func" + FuncTypeString(e.Type) + "{ TODO ast.FuncLit.Body }"
 	case *ast.CompositeLit:
 		if len(e.Elts) == 0 {
-			return ExprString(e.Type) + "{}"
+			return exprString(e.Type, qualifyer) + "{}"
 		}
 		var b strings.Builder
-		b.WriteString(ExprString(e.Type))
+		b.WriteString(exprString(e.Type, qualifyer))
 		b.WriteString("{ ")
 		for i, elem := range e.Elts {
 			if i > 0 {
 				b.WriteString("; ")
 			}
-			b.WriteString(ExprString(elem))
+			b.WriteString(exprString(elem, qualifyer))
 		}
 		b.WriteString(" }")
 		return b.String()
 	case *ast.ParenExpr:
-		return "(" + ExprString(e.X) + ")"
-	case *ast.SelectorExpr:
-		return ExprString(e.X) + "." + e.Sel.Name
+		return "(" + exprString(e.X, qualifyer) + ")"
 	case *ast.IndexExpr:
-		return ExprString(e.X) + "[" + ExprString(e.Index) + "]"
+		return exprString(e.X, qualifyer) + "[" + exprString(e.Index, qualifyer) + "]"
 	case *ast.SliceExpr:
 		return "TODO ast.SliceExpr"
 	case *ast.TypeAssertExpr:
-		return ExprString(e.X) + ".(" + ExprString(e.Type) + ")"
+		return exprString(e.X, qualifyer) + ".(" + exprString(e.Type, qualifyer) + ")"
 	case *ast.CallExpr:
 		return "TODO ast.CallExpr"
 	case *ast.StarExpr:
-		return "*" + ExprString(e.X)
+		return "*" + exprString(e.X, qualifyer)
 	case *ast.UnaryExpr:
 		if e.OpPos == e.Pos() {
-			return e.Op.String() + ExprString(e.X)
+			return e.Op.String() + exprString(e.X, qualifyer)
 		}
-		return ExprString(e.X) + e.Op.String()
+		return exprString(e.X, qualifyer) + e.Op.String()
 	case *ast.BinaryExpr:
-		return ExprString(e.X) + " " + e.Op.String() + " " + ExprString(e.Y)
+		return exprString(e.X, qualifyer) + " " + e.Op.String() + " " + exprString(e.Y, qualifyer)
 	case *ast.KeyValueExpr:
-		return ExprString(e.Key) + ": " + ExprString(e.Value)
+		return exprString(e.Key, qualifyer) + ": " + exprString(e.Value, qualifyer)
 	case *ast.ArrayType:
-		return "[" + ExprString(e.Len) + "]" + ExprString(e.Elt)
+		return "[" + exprString(e.Len, qualifyer) + "]" + exprString(e.Elt, qualifyer)
 	case *ast.StructType:
 		if e.Fields.NumFields() == 0 {
 			return "struct{}"
@@ -94,19 +105,19 @@ func ExprString(expr ast.Expr) string {
 		b.WriteString(" }")
 		return b.String()
 	case *ast.MapType:
-		return "map[" + ExprString(e.Key) + "]" + ExprString(e.Value)
+		return "map[" + exprString(e.Key, qualifyer) + "]" + exprString(e.Value, qualifyer)
 	case *ast.ChanType:
 		switch {
 		case e.Dir == ast.RECV && e.Begin == e.Arrow:
-			return "<-chan " + ExprString(e.Value)
+			return "<-chan " + exprString(e.Value, qualifyer)
 		case e.Dir == ast.RECV && e.Begin < e.Arrow:
-			return "chan<- " + ExprString(e.Value)
+			return "chan<- " + exprString(e.Value, qualifyer)
 		case e.Dir == ast.SEND && e.Begin == e.Arrow:
-			return "->chan " + ExprString(e.Value)
+			return "->chan " + exprString(e.Value, qualifyer)
 		case e.Dir == ast.SEND && e.Begin < e.Arrow:
-			return "chan-> " + ExprString(e.Value)
+			return "chan-> " + exprString(e.Value, qualifyer)
 		default:
-			return "chan " + ExprString(e.Value)
+			return "chan " + exprString(e.Value, qualifyer)
 		}
 	default:
 		return fmt.Sprintf("TODO %T", expr)
@@ -177,4 +188,46 @@ func FuncTypeString(funcType *ast.FuncType) string {
 	}
 	b.WriteByte(')')
 	return b.String()
+}
+
+// TypeExprNameQualifyers sets all type name qualifyers (package names) at the massed map
+// that are used in any ast.SelectorExpr recursively found
+// within the passed type expression.
+func TypeExprNameQualifyers(expr ast.Expr, qualifyers map[string]struct{}) {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		// Unqualified name
+	case *ast.SelectorExpr:
+		qualifyers[ExprString(e.X)] = struct{}{}
+	case *ast.StarExpr:
+		TypeExprNameQualifyers(e.X, qualifyers)
+	case *ast.Ellipsis:
+		TypeExprNameQualifyers(e.Elt, qualifyers)
+	case *ast.ArrayType:
+		TypeExprNameQualifyers(e.Elt, qualifyers)
+	case *ast.StructType:
+		for _, f := range e.Fields.List {
+			TypeExprNameQualifyers(f.Type, qualifyers)
+		}
+	case *ast.CompositeLit:
+		for _, elt := range e.Elts {
+			TypeExprNameQualifyers(elt, qualifyers)
+		}
+	case *ast.MapType:
+		TypeExprNameQualifyers(e.Key, qualifyers)
+		TypeExprNameQualifyers(e.Value, qualifyers)
+	case *ast.ChanType:
+		TypeExprNameQualifyers(e.Value, qualifyers)
+	case *ast.FuncType:
+		for _, p := range e.Params.List {
+			TypeExprNameQualifyers(p.Type, qualifyers)
+		}
+		if e.Results != nil {
+			for _, r := range e.Results.List {
+				TypeExprNameQualifyers(r.Type, qualifyers)
+			}
+		}
+	default:
+		panic(fmt.Sprintf("UNSUPPORTED: %#v", expr))
+	}
 }
