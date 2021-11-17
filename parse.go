@@ -1,18 +1,13 @@
 package astvisit
 
 import (
-	"errors"
 	"fmt"
 	"go/ast"
-	"go/build"
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
-
-	"golang.org/x/tools/go/packages"
 )
 
 var fileCounter uint32
@@ -59,8 +54,6 @@ func ParseStatements(fset *token.FileSet, src string) ([]ast.Stmt, []*ast.Commen
 	return file.Decls[0].(*ast.FuncDecl).Body.List, file.Comments, nil
 }
 
-var ErrPackageNotFound = errors.New("package not found")
-
 // ParsePackage parses the package source in pkgDir including comments.
 // If filter != nil, only the files with fs.FileInfo entries passing through
 // the filter (and ending in ".go") are considered.
@@ -81,64 +74,4 @@ func ParsePackage(fset *token.FileSet, pkgDir string, filter func(fs.FileInfo) b
 		return pkg, nil
 	}
 	panic("never reached")
-}
-
-type PackageLocation struct {
-	PkgName    string
-	SourcePath string
-	Std        bool
-}
-
-func LocatePackage(projectDir, importPath string) (*PackageLocation, error) {
-	if len(importPath) >= 2 && importPath[0] == '"' && importPath[len(importPath)-1] == '"' {
-		importPath = importPath[1 : len(importPath)-1]
-	}
-	config := packages.Config{
-		Mode: packages.NeedName + packages.NeedFiles,
-		Dir:  projectDir,
-	}
-	pkgs, err := packages.Load(&config, importPath)
-	if err != nil {
-		return nil, err
-	}
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("could not load importPath %q for projectDir %q", importPath, projectDir)
-	}
-	return &PackageLocation{
-		PkgName:    pkgs[0].Name,
-		SourcePath: filepath.Dir(pkgs[0].GoFiles[0]),
-		Std:        strings.HasPrefix(pkgs[0].GoFiles[0], build.Default.GOROOT),
-	}, nil
-}
-
-func ImportLineInfo(projectDir, importLine string) (importName string, loc *PackageLocation, err error) {
-	importLine = strings.TrimPrefix(importLine, "import")
-	begQuote := strings.IndexByte(importLine, '"')
-	endQuote := strings.LastIndexByte(importLine, '"')
-	if begQuote == -1 || begQuote == endQuote {
-		return "", nil, fmt.Errorf("invalid quoted import: %s", importLine)
-	}
-	importPath := importLine[begQuote+1 : endQuote]
-
-	loc, err = LocatePackage(projectDir, importPath)
-	if err != nil {
-		return "", nil, err
-	}
-	importName = strings.TrimSpace(importLine[:begQuote])
-	if importName == "" {
-		importName = loc.PkgName
-	}
-	return importName, loc, nil
-}
-
-func ImportSpecInfo(projectDir string, importSpec *ast.ImportSpec) (importName string, loc *PackageLocation, err error) {
-	loc, err = LocatePackage(projectDir, importSpec.Path.Value)
-	if err != nil {
-		return "", nil, err
-	}
-	importName = ExprString(importSpec.Name)
-	if importName == "" {
-		importName = loc.PkgName
-	}
-	return importName, loc, nil
 }
