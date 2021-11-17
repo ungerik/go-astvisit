@@ -139,13 +139,15 @@ func FuncTypeString(funcType *ast.FuncType) string {
 		if fieldIndex > 0 {
 			b.WriteString(", ")
 		}
-		for i, name := range field.Names {
-			if i > 0 {
-				b.WriteString(", ")
+		if len(field.Names) > 0 {
+			for i, name := range field.Names {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(name.Name)
 			}
-			b.WriteString(name.Name)
+			b.WriteByte(' ')
 		}
-		b.WriteByte(' ')
 		b.WriteString(ExprString(field.Type))
 	}
 	b.WriteByte(')')
@@ -162,13 +164,15 @@ func FuncTypeString(funcType *ast.FuncType) string {
 		if fieldIndex > 0 {
 			b.WriteString(", ")
 		}
-		for i, name := range field.Names {
-			if i > 0 {
-				b.WriteString(", ")
+		if len(field.Names) > 0 {
+			for i, name := range field.Names {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(name.Name)
 			}
-			b.WriteString(name.Name)
+			b.WriteByte(' ')
 		}
-		b.WriteByte(' ')
 		b.WriteString(ExprString(field.Type))
 	}
 	b.WriteByte(')')
