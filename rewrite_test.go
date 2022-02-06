@@ -8,27 +8,30 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func ExampleRewrite() {
+	cwd, _ := os.Getwd()
+	cwd += string(os.PathSeparator)
 	// Use verboseWriter to print encountered file paths
 	err := Rewrite(
 		"./...",
-		os.Stdout, // verboseWriter
-		nil,       // printOnly
-		func(fset *token.FileSet, filePkg *ast.Package, astFile *ast.File, filePath string, verboseWriter, printOnly io.Writer) error {
+		nil, // verboseOut
+		nil, // resultOut
+		func(fset *token.FileSet, filePkg *ast.Package, astFile *ast.File, filePath string, verboseWriter io.Writer) ([]byte, error) {
 			info, err := os.Stat(filePath)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if info.IsDir() {
-				return errors.New("listed directory")
+				return nil, errors.New("listed directory")
 			}
 			if filepath.Ext(filePath) != ".go" {
-				return errors.New("listed non .go file")
+				return nil, errors.New("listed non .go file")
 			}
-			_, err = fmt.Fprintln(verboseWriter, filePath)
-			return err
+			_, err = fmt.Println(strings.TrimPrefix(filePath, cwd))
+			return nil, err
 		})
 	if err != nil {
 		panic(err)
