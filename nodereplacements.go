@@ -2,10 +2,12 @@ package astvisit
 
 import (
 	"bytes"
+	"fmt"
 	"go/ast"
 	"go/format"
 	"go/token"
 	"sort"
+	"strings"
 )
 
 // PosNode implements ast.Node by returning
@@ -21,28 +23,32 @@ func (p PosNode) End() token.Pos { return token.Pos(p) }
 type NodeReplacement struct {
 	Node        ast.Node
 	Replacement interface{} // nil, string, []byte, or anything accepted by format.Node
+	DebugID     string
 }
 
 type NodeReplacements []NodeReplacement
 
-func (repls *NodeReplacements) AddReplacement(node ast.Node, replacement interface{}) {
+func (repls *NodeReplacements) AddReplacement(node ast.Node, replacement interface{}, debugID ...string) {
 	*repls = append(*repls, NodeReplacement{
 		Node:        node,
 		Replacement: replacement,
+		DebugID:     strings.Join(debugID, ""),
 	})
 }
 
-func (repls *NodeReplacements) AddInsertAfter(node ast.Node, insertion interface{}) {
+func (repls *NodeReplacements) AddInsertAfter(node ast.Node, insertion interface{}, debugID ...string) {
 	*repls = append(*repls, NodeReplacement{
 		Node:        PosNode(node.End()),
 		Replacement: insertion,
+		DebugID:     strings.Join(debugID, ""),
 	})
 }
 
-func (repls *NodeReplacements) AddRemoval(node ast.Node) {
+func (repls *NodeReplacements) AddRemoval(node ast.Node, debugID ...string) {
 	*repls = append(*repls, NodeReplacement{
 		Node:        node,
 		Replacement: nil,
+		DebugID:     strings.Join(debugID, ""),
 	})
 }
 
@@ -55,10 +61,17 @@ func (repls NodeReplacements) Sort() {
 }
 
 func (repls NodeReplacements) Apply(fset *token.FileSet, source []byte) ([]byte, error) {
+	return repls.apply(fset, source, false)
+}
+
+func (repls NodeReplacements) DebugApply(fset *token.FileSet, source []byte) ([]byte, error) {
+	return repls.apply(fset, source, true)
+}
+
+func (repls NodeReplacements) apply(fset *token.FileSet, source []byte, debug bool) ([]byte, error) {
 	repls.Sort()
 	var (
-		err       error
-		buf       bytes.Buffer
+		result    = bytes.NewBuffer(make([]byte, 0, len(source)))
 		sourcePos = 0
 	)
 	for _, repl := range repls {
@@ -66,7 +79,22 @@ func (repls NodeReplacements) Apply(fset *token.FileSet, source []byte) ([]byte,
 		end := fset.Position(repl.Node.End()).Offset
 		gap := source[sourcePos:pos]
 		if repl.Replacement != nil || containsNonSpace(gap) {
-			_, err = buf.Write(gap)
+			_, err := result.Write(gap)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if debug {
+			filename := fset.File(repl.Node.Pos()).Name()
+			_, err := fmt.Fprintf(result, "<<<<<<< %s\n", filename)
+			if err != nil {
+				return nil, err
+			}
+			_, err = result.Write(source[pos:end])
+			if err != nil {
+				return nil, err
+			}
+			_, err = fmt.Fprint(result, "\n=======")
 			if err != nil {
 				return nil, err
 			}
@@ -79,34 +107,47 @@ func (repls NodeReplacements) Apply(fset *token.FileSet, source []byte) ([]byte,
 				end++
 			}
 		case string:
-			_, err = buf.WriteString(r)
+			_, err := result.WriteString(r)
+			if err != nil {
+				return nil, err
+			}
 			// Skip newline after replaced if replacement also ands with a newline
 			if len(r) > 0 && r[len(r)-1] == '\n' && end < len(source) && source[end] == '\n' {
 				end++
 			}
 		case []byte:
-			_, err = buf.Write(r)
+			_, err := result.Write(r)
+			if err != nil {
+				return nil, err
+			}
 			// Skip newline after replaced if replacement also ands with a newline
 			if len(r) > 0 && r[len(r)-1] == '\n' && end < len(source) && source[end] == '\n' {
 				end++
 			}
 		default:
-			err = format.Node(&buf, fset, r)
+			err := format.Node(result, fset, r)
+			if err != nil {
+				return nil, err
+			}
 			// Skip newline after replaced if replacement also ands with a newline
-			if buf.Len() > 0 && buf.Bytes()[buf.Len()-1] == '\n' && end < len(source) && source[end] == '\n' {
+			if result.Len() > 0 && result.Bytes()[result.Len()-1] == '\n' && end < len(source) && source[end] == '\n' {
 				end++
 			}
 		}
-		if err != nil {
-			return nil, err
-		}
 		sourcePos = end
+		if debug {
+			_, err := fmt.Fprintf(result, "\n>>>>>>> %s\n", repl.DebugID)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
-	_, err = buf.Write(source[sourcePos:])
+	// Write rest of source after replacements
+	_, err := result.Write(source[sourcePos:])
 	if err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	return result.Bytes(), nil
 }
 
 func containsNonSpace(b []byte) bool {
