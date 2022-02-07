@@ -1,13 +1,21 @@
 package astvisit
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/build"
+	"go/format"
+	"go/parser"
+	"go/token"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 
+	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/go/packages"
+	"golang.org/x/tools/imports"
 )
 
 type PackageLocation struct {
@@ -80,3 +88,40 @@ func ImportNameAndPathOfImportLine(importLine string) (importName, importPath st
 	importName = strings.TrimSpace(importLine[:begQuote])
 	return importName, importPath, nil
 }
+
+// FormatFileWithImports formats sourceCode and makes sure that the passed importLines are included.
+// Imports with localImportPrefixes will be sorted into separated groups after the third party imports.
+func FormatFileWithImports(fset *token.FileSet, sourceCode []byte, importLines map[string]struct{}, localImportPrefixes ...string) ([]byte, error) {
+	astFile, err := parser.ParseFile(fset, nextFileName(), sourceCode, parser.ParseComments|parser.AllErrors)
+	if err != nil {
+		return nil, err
+	}
+	// Sort import lines to add the missing ones in repeatable order
+	sortedImportLines := make([]string, 0, len(importLines))
+	for l := range importLines {
+		sortedImportLines = append(sortedImportLines, l)
+	}
+	sort.Strings(sortedImportLines)
+	for _, importLine := range sortedImportLines {
+		name, path, err := ImportNameAndPathOfImportLine(importLine)
+		if err != nil {
+			return nil, err
+		}
+		astutil.AddNamedImport(fset, astFile, name, path)
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, len(sourceCode)))
+	err = format.Node(buf, fset, astFile)
+	if err != nil {
+		return nil, err
+	}
+	sourceCode = buf.Bytes()
+
+	// TODO replace by something more efficient and elegant
+	// than re-parsing everything and using the global variable imports.LocalPrefix
+	importsLocalPrefixMtx.Lock()
+	defer importsLocalPrefixMtx.Unlock()
+	imports.LocalPrefix = strings.Join(localImportPrefixes, ",")
+	return imports.Process(nextFileName(), sourceCode, &imports.Options{Comments: true, FormatOnly: true})
+}
+
+var importsLocalPrefixMtx sync.Mutex

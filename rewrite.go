@@ -58,7 +58,10 @@ func Rewrite(path string, verboseOut, resultOut io.Writer, rewriteFileFunc Rewri
 			}
 		}
 	} else {
-		FprintfVerbose(verboseOut, "%s\n", err)
+		err = FprintfVerbose(verboseOut, "%s\n", err)
+		if err != nil {
+			return err
+		}
 	}
 	if !recursive {
 		return nil

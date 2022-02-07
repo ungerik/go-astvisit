@@ -19,9 +19,9 @@ func nextFileName() string {
 
 // ParseDeclarations either from a complete source file
 // or from a code snippet without a package clause.
-func ParseDeclarations(fset *token.FileSet, src string) ([]ast.Decl, []*ast.CommentGroup, error) {
+func ParseDeclarations(fset *token.FileSet, sourceCode string) ([]ast.Decl, []*ast.CommentGroup, error) {
 	// Try as whole source file.
-	file, err := parser.ParseFile(fset, nextFileName(), src, parser.ParseComments)
+	file, err := parser.ParseFile(fset, nextFileName(), sourceCode, parser.ParseComments)
 	if err == nil {
 		return file.Decls, file.Comments, nil
 	}
@@ -36,7 +36,7 @@ func ParseDeclarations(fset *token.FileSet, src string) ([]ast.Decl, []*ast.Comm
 	// by inserting a package clause.
 	// Insert using a ';', not a newline, so that the line numbers
 	// in psrc match the ones in src.
-	psrc := "package p; " + src
+	psrc := "package p; " + sourceCode
 	file, err = parser.ParseFile(fset, "", psrc, parser.ParseComments)
 	if err != nil {
 		return nil, nil, err
@@ -45,8 +45,8 @@ func ParseDeclarations(fset *token.FileSet, src string) ([]ast.Decl, []*ast.Comm
 }
 
 // ParseStatements a from a code snippet
-func ParseStatements(fset *token.FileSet, src string) ([]ast.Stmt, []*ast.CommentGroup, error) {
-	fsrc := "package p; func _() { " + src + "\n\n}"
+func ParseStatements(fset *token.FileSet, sourceCode string) ([]ast.Stmt, []*ast.CommentGroup, error) {
+	fsrc := "package p; func _() { " + sourceCode + "\n\n}"
 	file, err := parser.ParseFile(fset, nextFileName(), fsrc, parser.ParseComments)
 	if err != nil {
 		return nil, nil, err
