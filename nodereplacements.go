@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/format"
 	"go/token"
+	"math"
 	"sort"
 	"strings"
 )
@@ -19,6 +20,40 @@ type PosNode token.Pos
 
 func (p PosNode) Pos() token.Pos { return token.Pos(p) }
 func (p PosNode) End() token.Pos { return token.Pos(p) }
+
+type NodeRange []ast.Node
+
+func (r NodeRange) Pos() token.Pos {
+	switch len(r) {
+	case 0:
+		return token.NoPos
+	case 1:
+		return r[0].Pos()
+	}
+	min := token.Pos(math.MaxInt)
+	for _, n := range r {
+		if p := n.Pos(); p < min {
+			min = p
+		}
+	}
+	return min
+}
+
+func (r NodeRange) End() token.Pos {
+	switch len(r) {
+	case 0:
+		return token.NoPos
+	case 1:
+		return r[0].End()
+	}
+	max := token.Pos(-math.MaxInt)
+	for _, n := range r {
+		if p := n.End(); p > max {
+			max = p
+		}
+	}
+	return max
+}
 
 type NodeReplacement struct {
 	Node        ast.Node
