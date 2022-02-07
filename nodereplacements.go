@@ -8,27 +8,41 @@ import (
 	"sort"
 )
 
-type NodeReplacements []struct {
+// PosNode implements ast.Node by returning
+// the same underlying token.Pos
+// from its Pos() and End() methods.
+// Usable as zero size replacement node
+// to mark the position of a code insertion.
+type PosNode token.Pos
+
+func (p PosNode) Pos() token.Pos { return token.Pos(p) }
+func (p PosNode) End() token.Pos { return token.Pos(p) }
+
+type NodeReplacement struct {
 	Node        ast.Node
 	Replacement interface{} // nil, string, []byte, or anything accepted by format.Node
 }
 
+type NodeReplacements []NodeReplacement
+
 func (repls *NodeReplacements) AddReplacement(node ast.Node, replacement interface{}) {
-	*repls = append(*repls, struct {
-		Node        ast.Node
-		Replacement interface{}
-	}{
+	*repls = append(*repls, NodeReplacement{
 		Node:        node,
 		Replacement: replacement,
 	})
 }
 
+func (repls *NodeReplacements) AddInsertAfter(node ast.Node, insertion interface{}) {
+	*repls = append(*repls, NodeReplacement{
+		Node:        PosNode(node.End()),
+		Replacement: insertion,
+	})
+}
+
 func (repls *NodeReplacements) AddRemoval(node ast.Node) {
-	*repls = append(*repls, struct {
-		Node        ast.Node
-		Replacement interface{}
-	}{
-		Node: node,
+	*repls = append(*repls, NodeReplacement{
+		Node:        node,
+		Replacement: nil,
 	})
 }
 

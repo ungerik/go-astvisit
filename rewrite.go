@@ -91,7 +91,7 @@ func rewriteFile(fset *token.FileSet, pkg *ast.Package, filePath string, verbose
 	if !ok {
 		return fmt.Errorf("package %s has no file %s", pkg.Name, filepath.Base(filePath))
 	}
-	err := FprintfVerbose(verboseOut, "rewriting file: %s\n", filePath)
+	err := FprintfVerbose(verboseOut, "parsing file: %s\n", filePath)
 	if err != nil {
 		return err
 	}
