@@ -18,6 +18,42 @@ import (
 	"golang.org/x/tools/imports"
 )
 
+type Imports map[string]struct{}
+
+func (imports Imports) Sorted() []string {
+	sorted := make([]string, 0, len(imports))
+	for imp := range imports {
+		sorted = append(sorted, imp)
+	}
+	sort.Strings(sorted)
+	return sorted
+}
+
+func (imports Imports) Add(line string) {
+	imports[line] = struct{}{}
+}
+
+func (imports Imports) Remove(line string) {
+	delete(imports, line)
+}
+
+func (imports Imports) Contains(line string) bool {
+	if _, ok := imports[line]; ok {
+		return true
+	}
+	for imp := range imports {
+		_, importPath, err := ImportNameAndPathOfImportLine(imp)
+		if err == nil && importPath == line {
+			return true
+		}
+	}
+	_, importPath, err := ImportNameAndPathOfImportLine(line)
+	if err == nil && importPath != line {
+		return imports.Contains(importPath)
+	}
+	return false
+}
+
 type PackageLocation struct {
 	PkgName    string
 	SourcePath string
@@ -91,25 +127,19 @@ func ImportNameAndPathOfImportLine(importLine string) (importName, importPath st
 
 // FormatFileWithImports formats sourceCode and makes sure that the passed importLines are included.
 // Imports with localImportPrefixes will be sorted into separated groups after the third party imports.
-func FormatFileWithImports(fset *token.FileSet, sourceCode []byte, importLines map[string]struct{}, localImportPrefixes ...string) ([]byte, error) {
+func FormatFileWithImports(fset *token.FileSet, sourceCode []byte, importLines Imports, localImportPrefixes ...string) ([]byte, error) {
 	astFile, err := parser.ParseFile(fset, nextFileName(), sourceCode, parser.ParseComments|parser.AllErrors)
 	if err != nil {
 		return nil, err
 	}
-	// Sort import lines to add the missing ones in repeatable order
-	sortedImportLines := make([]string, 0, len(importLines))
-	for l := range importLines {
-		sortedImportLines = append(sortedImportLines, l)
-	}
-	sort.Strings(sortedImportLines)
-	for _, importLine := range sortedImportLines {
+	for _, importLine := range importLines.Sorted() {
 		name, path, err := ImportNameAndPathOfImportLine(importLine)
 		if err != nil {
 			return nil, err
 		}
 		astutil.AddNamedImport(fset, astFile, name, path)
 	}
-	buf := bytes.NewBuffer(make([]byte, 0, len(sourceCode)))
+	buf := bytes.NewBuffer(make([]byte, 0, len(sourceCode)*2))
 	err = format.Node(buf, fset, astFile)
 	if err != nil {
 		return nil, err
