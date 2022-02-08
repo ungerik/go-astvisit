@@ -1,6 +1,7 @@
 package astvisit
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -12,11 +13,54 @@ import (
 	"strings"
 )
 
-// RewriteFileFunc is called for a source file to return
+// FileReplacementsFunc is called for a source file by RewriteWithReplacements
+// to return NodeReplacements and Imports that will be applied to the source file.
+type FileReplacementsFunc func(fset *token.FileSet, pkg *ast.Package, astFile *ast.File, filePath string, verboseOut io.Writer) (NodeReplacements, Imports, error)
+
+func RewriteWithReplacements(path string, verboseOut, resultOut io.Writer, debug bool, fileReplacementsFunc FileReplacementsFunc) error {
+	if fileReplacementsFunc == nil {
+		return errors.New("nil fileReplacementsFunc")
+	}
+	return Rewrite(path, verboseOut, resultOut, func(fset *token.FileSet, pkg *ast.Package, astFile *ast.File, filePath string, verboseOut io.Writer) ([]byte, error) {
+		replacements, imports, err := fileReplacementsFunc(fset, pkg, astFile, filePath, verboseOut)
+		if err != nil {
+			return nil, err
+		}
+		if len(replacements) == 0 {
+			return nil, nil
+		}
+
+		source, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, err
+		}
+		if debug {
+			return replacements.DebugApply(fset, source)
+		}
+
+		rewritten, err := replacements.Apply(fset, source)
+		if err != nil {
+			return nil, err
+		}
+		rewritten, err = FormatFileWithImports(fset, rewritten, imports)
+		if err != nil {
+			return nil, err
+		}
+		if bytes.Equal(source, rewritten) {
+			return nil, nil
+		}
+		return rewritten, nil
+	})
+}
+
+// RewriteFileFunc is called for a source file by Rewrite to return
 // the rewritten source or nil if the file should not be changed.
 type RewriteFileFunc func(fset *token.FileSet, pkg *ast.Package, astFile *ast.File, filePath string, verboseOut io.Writer) ([]byte, error)
 
 func Rewrite(path string, verboseOut, resultOut io.Writer, rewriteFileFunc RewriteFileFunc) error {
+	if rewriteFileFunc == nil {
+		return errors.New("nil rewriteFileFunc")
+	}
 	recursive := strings.HasSuffix(path, "...")
 	if recursive {
 		path = strings.TrimSuffix(path, "...")

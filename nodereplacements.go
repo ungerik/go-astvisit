@@ -106,7 +106,7 @@ func (repls NodeReplacements) DebugApply(fset *token.FileSet, source []byte) ([]
 func (repls NodeReplacements) apply(fset *token.FileSet, source []byte, debug bool) ([]byte, error) {
 	repls.Sort()
 	var (
-		result    = bytes.NewBuffer(make([]byte, 0, len(source)))
+		result    = bytes.NewBuffer(make([]byte, 0, len(source)*2))
 		sourcePos = 0
 	)
 	for _, repl := range repls {
