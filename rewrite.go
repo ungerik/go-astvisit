@@ -165,7 +165,7 @@ func filterOutTests(info os.FileInfo) bool {
 }
 
 // FprintfVerbose calls fmt.Fprintf if verboseOut is not nil
-func FprintfVerbose(verboseOut io.Writer, format string, args ...interface{}) error {
+func FprintfVerbose(verboseOut io.Writer, format string, args ...any) error {
 	if verboseOut == nil {
 		return nil
 	}

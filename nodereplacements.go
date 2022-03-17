@@ -57,13 +57,13 @@ func (r NodeRange) End() token.Pos {
 
 type NodeReplacement struct {
 	Node        ast.Node
-	Replacement interface{} // nil, string, []byte, or anything accepted by format.Node
+	Replacement any // nil, string, []byte, or anything accepted by format.Node
 	DebugID     string
 }
 
 type NodeReplacements []NodeReplacement
 
-func (repls *NodeReplacements) AddReplacement(node ast.Node, replacement interface{}, debugID ...string) {
+func (repls *NodeReplacements) AddReplacement(node ast.Node, replacement any, debugID ...string) {
 	*repls = append(*repls, NodeReplacement{
 		Node:        node,
 		Replacement: replacement,
@@ -71,7 +71,7 @@ func (repls *NodeReplacements) AddReplacement(node ast.Node, replacement interfa
 	})
 }
 
-func (repls *NodeReplacements) AddInsertAfter(node ast.Node, insertion interface{}, debugID ...string) {
+func (repls *NodeReplacements) AddInsertAfter(node ast.Node, insertion any, debugID ...string) {
 	*repls = append(*repls, NodeReplacement{
 		Node:        PosNode(node.End()),
 		Replacement: insertion,

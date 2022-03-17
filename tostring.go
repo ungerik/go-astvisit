@@ -92,7 +92,7 @@ func exprString(expr ast.Expr, qualifyer string) string {
 		return "func" + FuncTypeString(e)
 	case *ast.InterfaceType:
 		if e.Methods.NumFields() == 0 {
-			return "interface{}"
+			return "any" // "interface{}"
 		}
 		var b strings.Builder
 		b.WriteString("interface {")
