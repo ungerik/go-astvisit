@@ -5,6 +5,16 @@ import (
 	"go/ast"
 )
 
+// NodeType returns the type name of an AST node as a string.
+// This is useful for debugging, logging, or displaying node information.
+//
+// Examples:
+//   - *ast.FuncDecl → "FuncDecl"
+//   - *ast.Ident → "Ident"
+//   - *ast.IndexListExpr → "IndexListExpr"
+//   - nil → "<nil>"
+//
+// Panics if the node type is not recognized (should never happen for valid AST nodes).
 func NodeType(node ast.Node) string {
 	switch node.(type) {
 	case nil:

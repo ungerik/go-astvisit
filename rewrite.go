@@ -13,10 +13,44 @@ import (
 	"strings"
 )
 
-// FileReplacementsFunc is called for a source file by RewriteWithReplacements
-// to return NodeReplacements and Imports that will be applied to the source file.
+// FileReplacementsFunc is called for each source file by RewriteWithReplacements.
+// It should return the NodeReplacements and Imports to be applied to the file.
+//
+// Parameters:
+//   - fset: Token file set for position information
+//   - pkg: The parsed package containing the file
+//   - astFile: The AST of the file being processed
+//   - filePath: Absolute path to the file
+//   - verboseOut: Writer for verbose output (may be nil)
+//
+// Returns:
+//   - NodeReplacements: Set of node-level replacements to apply
+//   - Imports: Set of import statements to ensure are present
+//   - error: Any error that occurred during processing
 type FileReplacementsFunc func(fset *token.FileSet, pkg *ast.Package, astFile *ast.File, filePath string, verboseOut io.Writer) (NodeReplacements, Imports, error)
 
+// RewriteWithReplacements rewrites Go source files using NodeReplacements.
+// This is a higher-level alternative to Rewrite that handles formatting and imports.
+//
+// Parameters:
+//   - path: File or directory path. Append "..." for recursive directory traversal.
+//   - verboseOut: Writer for verbose logging (nil to disable)
+//   - resultOut: Writer for rewritten source (nil to write back to files)
+//   - debug: If true, outputs diff-style debug information
+//   - fileReplacementsFunc: Function called for each file to compute replacements
+//
+// Returns an error if any file fails to process.
+//
+// Example:
+//
+//	err := astvisit.RewriteWithReplacements("./...", os.Stdout, nil, false,
+//	    func(fset *token.FileSet, pkg *ast.Package, file *ast.File,
+//	         filePath string, verboseOut io.Writer) (NodeReplacements, Imports, error) {
+//	        var replacements NodeReplacements
+//	        imports := make(Imports)
+//	        // Compute replacements...
+//	        return replacements, imports, nil
+//	    })
 func RewriteWithReplacements(path string, verboseOut, resultOut io.Writer, debug bool, fileReplacementsFunc FileReplacementsFunc) error {
 	if fileReplacementsFunc == nil {
 		return errors.New("nil fileReplacementsFunc")
@@ -53,10 +87,49 @@ func RewriteWithReplacements(path string, verboseOut, resultOut io.Writer, debug
 	})
 }
 
-// RewriteFileFunc is called for a source file by Rewrite to return
-// the rewritten source or nil if the file should not be changed.
+// RewriteFileFunc is called for each source file by Rewrite.
+// It should return the rewritten source code, or nil if no changes are needed.
+//
+// Parameters:
+//   - fset: Token file set for position information
+//   - pkg: The parsed package containing the file
+//   - astFile: The AST of the file being processed
+//   - filePath: Absolute path to the file
+//   - verboseOut: Writer for verbose output (may be nil)
+//
+// Returns:
+//   - []byte: The rewritten source code, or nil for no changes
+//   - error: Any error that occurred during processing
 type RewriteFileFunc func(fset *token.FileSet, pkg *ast.Package, astFile *ast.File, filePath string, verboseOut io.Writer) ([]byte, error)
 
+// Rewrite transforms Go source files by applying a transformation function.
+// It handles parsing, traversal, and writing modified files back to disk.
+//
+// Parameters:
+//   - path: File or directory path. Append "..." for recursive directory traversal.
+//           Example: "./..." processes all .go files in the current directory and subdirectories.
+//   - verboseOut: Writer for verbose logging (nil to disable)
+//   - resultOut: Writer for rewritten source (nil to write back to original files)
+//   - rewriteFileFunc: Function called for each file to perform transformations
+//
+// The function:
+//   - Skips test files (*_test.go)
+//   - Skips hidden directories (starting with .)
+//   - Skips node_modules directories
+//   - Processes files in sorted order for deterministic behavior
+//
+// Returns an error if any file fails to process.
+//
+// Example - rename all identifiers:
+//
+//	err := astvisit.Rewrite("./...", os.Stdout, nil,
+//	    func(fset *token.FileSet, pkg *ast.Package, file *ast.File,
+//	         filePath string, verboseOut io.Writer) ([]byte, error) {
+//	        // Use Visit to transform the AST
+//	        astvisit.Visit(file, &myVisitor{}, nil)
+//	        // Format and return the modified source
+//	        return format.Node(buf, fset, file)
+//	    })
 func Rewrite(path string, verboseOut, resultOut io.Writer, rewriteFileFunc RewriteFileFunc) error {
 	if rewriteFileFunc == nil {
 		return errors.New("nil rewriteFileFunc")

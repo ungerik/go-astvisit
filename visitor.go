@@ -4,6 +4,25 @@ import (
 	"go/ast"
 )
 
+// Visitor defines the interface for visiting AST nodes in a type-safe manner.
+// Each method corresponds to a specific ast.Node type and is called when
+// that node type is encountered during traversal.
+//
+// Methods return bool to control traversal:
+//   - true: Continue visiting child nodes
+//   - false: Skip visiting child nodes (but continue with siblings)
+//
+// To implement a visitor, embed VisitorImpl to get default implementations
+// for all methods, then override only the methods you need:
+//
+//	type MyVisitor struct {
+//	    astvisit.VisitorImpl
+//	}
+//
+//	func (v *MyVisitor) VisitFuncDecl(node *ast.FuncDecl, cursor Cursor) bool {
+//	    // Handle function declarations
+//	    return true
+//	}
 type Visitor interface {
 	VisitComment(*ast.Comment, Cursor) bool
 	VisitCommentGroup(*ast.CommentGroup, Cursor) bool

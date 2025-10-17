@@ -17,8 +17,27 @@ func nextFileName() string {
 	return fmt.Sprintf("file%d.go", c)
 }
 
-// ParseDeclarations either from a complete source file
-// or from a code snippet without a package clause.
+// ParseDeclarations parses Go declarations from source code.
+// The source can be either a complete file or a code snippet without a package clause.
+//
+// If the source doesn't start with "package", it's automatically wrapped with
+// "package p; " to make it parseable.
+//
+// Returns:
+//   - []ast.Decl: The parsed declarations
+//   - []*ast.CommentGroup: Associated comments
+//   - error: Parse error if the source is invalid
+//
+// Example:
+//
+//	decls, comments, err := ParseDeclarations(fset, `
+//	    func Hello() string {
+//	        return "world"
+//	    }
+//	    type Person struct {
+//	        Name string
+//	    }
+//	`)
 func ParseDeclarations(fset *token.FileSet, sourceCode string) ([]ast.Decl, []*ast.CommentGroup, error) {
 	// Try as whole source file.
 	file, err := parser.ParseFile(fset, nextFileName(), sourceCode, parser.ParseComments)
@@ -44,7 +63,21 @@ func ParseDeclarations(fset *token.FileSet, sourceCode string) ([]ast.Decl, []*a
 	return file.Decls, file.Comments, nil
 }
 
-// ParseStatements a from a code snippet
+// ParseStatements parses Go statements from a code snippet.
+// The statements are automatically wrapped in a function body to make them parseable.
+//
+// Returns:
+//   - []ast.Stmt: The parsed statements
+//   - []*ast.CommentGroup: Associated comments
+//   - error: Parse error if the source is invalid
+//
+// Example:
+//
+//	stmts, comments, err := ParseStatements(fset, `
+//	    x := 42
+//	    y := x * 2
+//	    fmt.Println(y)
+//	`)
 func ParseStatements(fset *token.FileSet, sourceCode string) ([]ast.Stmt, []*ast.CommentGroup, error) {
 	fsrc := "package p; func _() { " + sourceCode + "\n\n}"
 	file, err := parser.ParseFile(fset, nextFileName(), fsrc, parser.ParseComments)
@@ -54,11 +87,29 @@ func ParseStatements(fset *token.FileSet, sourceCode string) ([]ast.Stmt, []*ast
 	return file.Decls[0].(*ast.FuncDecl).Body.List, file.Comments, nil
 }
 
-// ParsePackage parses the package source in pkgDir including comments.
-// If filter != nil, only the files with fs.FileInfo entries passing through
-// the filter (and ending in ".go") are considered.
-// Returns a wrapped ErrPackageNotFound error if the filtered pkgDir
-// does not contain Go source for a package.
+// ParsePackage parses all Go source files in a directory into a single package.
+// Comments are included in the parsed result.
+//
+// Parameters:
+//   - fset: Token file set for position tracking
+//   - pkgDir: Directory containing the package source files
+//   - filter: Optional filter function to select which files to parse.
+//     Only files where filter returns true (and ending in ".go") are parsed.
+//     Pass nil to parse all .go files.
+//
+// Returns:
+//   - *ast.Package: The parsed package containing all files
+//   - error: ErrPackageNotFound if no Go files found, or parse error
+//
+// Note: The "main" package is automatically ignored/deleted from results.
+//
+// Example:
+//
+//	// Parse all non-test files
+//	filter := func(info fs.FileInfo) bool {
+//	    return !strings.HasSuffix(info.Name(), "_test.go")
+//	}
+//	pkg, err := ParsePackage(fset, "./mypackage", filter)
 func ParsePackage(fset *token.FileSet, pkgDir string, filter func(fs.FileInfo) bool) (pkg *ast.Package, err error) {
 	pkgs, err := parser.ParseDir(fset, pkgDir, filter, parser.ParseComments)
 	if err != nil {

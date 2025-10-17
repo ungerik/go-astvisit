@@ -6,10 +6,26 @@ import (
 	"strings"
 )
 
+// ExprString converts an ast.Expr to its string representation.
+// This is useful for debugging or displaying type information.
+//
+// Examples:
+//   - *ast.Ident{Name: "foo"} → "foo"
+//   - *ast.SelectorExpr → "pkg.Type"
+//   - *ast.ArrayType → "[]int"
+//   - *ast.MapType → "map[string]int"
+//   - *ast.IndexListExpr → "Generic[T, U]" (Go 1.18+)
 func ExprString(expr ast.Expr) string {
 	return exprString(expr, "")
 }
 
+// ExprStringWithExportedNameQualifyer converts an ast.Expr to string,
+// adding a qualifier prefix to exported names.
+//
+// Example:
+//
+//	// If expr is an exported Ident "Foo" and qualifyer is "pkg"
+//	ExprStringWithExportedNameQualifyer(expr, "pkg") // Returns: "pkg.Foo"
 func ExprStringWithExportedNameQualifyer(expr ast.Expr, qualifyer string) string {
 	return exprString(expr, qualifyer)
 }

@@ -7,6 +7,36 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
+// Visit traverses an AST in depth-first order, calling visitor methods for each node.
+// It uses the astutil.Apply function internally but provides a type-safe visitor interface.
+//
+// Parameters:
+//   - root: The AST node to start traversal from (typically *ast.File or *ast.Package)
+//   - pre: Visitor called before visiting a node's children (pre-order). Can be nil.
+//   - post: Visitor called after visiting a node's children (post-order). Can be nil.
+//
+// Returns the potentially modified root node.
+//
+// The pre visitor is called in pre-order (parent before children) and can prevent
+// traversal of child nodes by returning false. The post visitor is called in
+// post-order (children before parent) and receives the node after all children
+// have been visited.
+//
+// Example:
+//
+//	type funcCounter struct {
+//	    astvisit.VisitorImpl
+//	    count int
+//	}
+//
+//	func (v *funcCounter) VisitFuncDecl(node *ast.FuncDecl, cursor astvisit.Cursor) bool {
+//	    v.count++
+//	    return true
+//	}
+//
+//	counter := &funcCounter{}
+//	astvisit.Visit(file, counter, nil)
+//	fmt.Printf("Found %d functions\n", counter.count)
 func Visit(root ast.Node, pre, post Visitor) (result ast.Node) {
 	path := make(Path, 0, 16)
 	preApply := func(c *astutil.Cursor) bool {

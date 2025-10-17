@@ -6,45 +6,86 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
+// Cursor provides context and navigation information about the current position
+// during AST traversal. It allows inspection of the node's location in the tree
+// and supports modifications like replacing, deleting, or inserting nodes.
+//
+// The Cursor is passed to each visitor method and provides access to:
+//   - The current node and its parent
+//   - The full path from root to current node
+//   - The field name and index in the parent structure
+//   - Methods to modify the AST during traversal
+//
+// Example usage:
+//
+//	func (v *myVisitor) VisitIdent(node *ast.Ident, cursor Cursor) bool {
+//	    // Get context
+//	    parent := cursor.Parent()
+//	    path := cursor.Path()
+//	    field := cursor.ParentField()
+//
+//	    // Modify AST
+//	    if node.Name == "old" {
+//	        cursor.Replace(&ast.Ident{Name: "new"})
+//	    }
+//	    return true
+//	}
 type Cursor interface {
-	// Path returns the current path of the cursor
+	// Path returns the full path from the root node to the current node,
+	// including parent field names and slice indices at each level.
 	Path() Path
 
-	// Node returns the current Node.
+	// Node returns the current node being visited.
 	Node() ast.Node
 
-	// Parent returns the parent of the current Node.
+	// Parent returns the parent node of the current node, or nil if
+	// the current node is the root.
 	Parent() ast.Node
 
-	// ParentField returns the name of the parent Node field that contains the current Node.
-	// If the parent is a *ast.Package and the current Node is a *ast.File, ParentField returns
-	// the filename for the current Node.
+	// ParentField returns the name of the parent node's struct field
+	// that contains the current node.
+	//
+	// Special case: If the parent is *ast.Package and the current node is
+	// *ast.File, ParentField returns the filename.
 	ParentField() string
 
-	// ParentFieldIndex reports the index >= 0 of the current Node in the slice of Nodes that
-	// contains it, or a value < 0 if the current Node is not part of a slice.
-	// The index of the current node changes if InsertBefore is called while
-	// processing the current node.
+	// ParentFieldIndex returns the index of the current node within its
+	// parent's slice field, or a value < 0 if the current node is not
+	// part of a slice.
+	//
+	// Note: The index may change if InsertBefore is called on the current node.
 	ParentFieldIndex() int
 
-	// Replace replaces the current Node with n.
-	// The replacement node is not walked by Apply.
+	// Replace replaces the current node with the given node n.
+	// The replacement node will not be visited during the current traversal.
+	//
+	// Example:
+	//	cursor.Replace(&ast.Ident{Name: "newName"})
 	Replace(n ast.Node)
 
-	// Delete deletes the current Node from its containing slice.
-	// If the current Node is not part of a slice, Delete panics.
-	// As a special case, if the current node is a package file,
+	// Delete removes the current node from its containing slice.
+	//
+	// Panics if the current node is not part of a slice.
+	//
+	// Special case: If the current node is a file in *ast.Package,
 	// Delete removes it from the package's Files map.
 	Delete()
 
-	// InsertAfter inserts n after the current Node in its containing slice.
-	// If the current Node is not part of a slice, InsertAfter panics.
-	// Apply does not walk n.
+	// InsertAfter inserts the given node n immediately after the current
+	// node in its containing slice.
+	//
+	// The inserted node will not be visited during the current traversal.
+	//
+	// Panics if the current node is not part of a slice.
 	InsertAfter(n ast.Node)
 
-	// InsertBefore inserts n before the current Node in its containing slice.
-	// If the current Node is not part of a slice, InsertBefore panics.
-	// Apply will not walk n.
+	// InsertBefore inserts the given node n immediately before the current
+	// node in its containing slice.
+	//
+	// The inserted node will not be visited during the current traversal.
+	// This changes the ParentFieldIndex of the current node.
+	//
+	// Panics if the current node is not part of a slice.
 	InsertBefore(n ast.Node)
 }
 

@@ -2,6 +2,20 @@ package astvisit
 
 import "go/ast"
 
+// VisitorImpl provides a default implementation of the Visitor interface
+// where all methods return true (continue traversal).
+//
+// Embed this struct in your visitor to avoid implementing all methods:
+//
+//	type MyVisitor struct {
+//	    astvisit.VisitorImpl
+//	}
+//
+//	// Only override the methods you need
+//	func (v *MyVisitor) VisitFuncDecl(node *ast.FuncDecl, cursor Cursor) bool {
+//	    fmt.Printf("Function: %s\n", node.Name.Name)
+//	    return true
+//	}
 type VisitorImpl struct{}
 
 func (VisitorImpl) VisitComment(*ast.Comment, Cursor) bool               { return true }
