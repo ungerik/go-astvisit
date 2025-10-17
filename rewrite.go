@@ -228,6 +228,7 @@ func rewriteFile(fset *token.FileSet, pkg *ast.Package, filePath string, verbose
 		_, err = resultOut.Write(rewritten)
 		return err
 	}
+	//nolint:gosec // G306: File permissions 0644 are appropriate for generated source files
 	return os.WriteFile(filePath, rewritten, 0644)
 }
 
