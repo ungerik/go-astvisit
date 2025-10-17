@@ -15,6 +15,9 @@ import (
 //   - *ast.ArrayType → "[]int"
 //   - *ast.MapType → "map[string]int"
 //   - *ast.IndexListExpr → "Generic[T, U]" (Go 1.18+)
+//   - *ast.CallExpr → "foo(1, 2)" or "foo(args...)"
+//   - *ast.SliceExpr → "arr[1:5]" or "arr[1:5:10]"
+//   - *ast.FuncLit → "func(x int) string { ... }"
 func ExprString(expr ast.Expr) string {
 	return exprString(expr, "")
 }
@@ -51,7 +54,7 @@ func exprString(expr ast.Expr, qualifyer string) string {
 	case *ast.BasicLit:
 		return e.Value
 	case *ast.FuncLit:
-		return "func" + FuncTypeString(e.Type) + "{ TODO ast.FuncLit.Body }"
+		return "func" + FuncTypeString(e.Type) + " { ... }"
 	case *ast.CompositeLit:
 		if len(e.Elts) == 0 {
 			return exprString(e.Type, qualifyer) + "{}"
@@ -84,11 +87,41 @@ func exprString(expr ast.Expr, qualifyer string) string {
 		b.WriteByte(']')
 		return b.String()
 	case *ast.SliceExpr:
-		return "TODO ast.SliceExpr"
+		var b strings.Builder
+		b.WriteString(exprString(e.X, qualifyer))
+		b.WriteByte('[')
+		if e.Low != nil {
+			b.WriteString(exprString(e.Low, qualifyer))
+		}
+		b.WriteByte(':')
+		if e.High != nil {
+			b.WriteString(exprString(e.High, qualifyer))
+		}
+		if e.Slice3 {
+			b.WriteByte(':')
+			if e.Max != nil {
+				b.WriteString(exprString(e.Max, qualifyer))
+			}
+		}
+		b.WriteByte(']')
+		return b.String()
 	case *ast.TypeAssertExpr:
 		return exprString(e.X, qualifyer) + ".(" + exprString(e.Type, qualifyer) + ")"
 	case *ast.CallExpr:
-		return "TODO ast.CallExpr"
+		var b strings.Builder
+		b.WriteString(exprString(e.Fun, qualifyer))
+		b.WriteByte('(')
+		for i, arg := range e.Args {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(exprString(arg, qualifyer))
+		}
+		if e.Ellipsis.IsValid() {
+			b.WriteString("...")
+		}
+		b.WriteByte(')')
+		return b.String()
 	case *ast.StarExpr:
 		return "*" + exprString(e.X, qualifyer)
 	case *ast.UnaryExpr:
