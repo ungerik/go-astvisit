@@ -39,10 +39,11 @@ func ExampleRewrite() {
 
 	// Output:
 	// cursor.go
+	// doc.go
 	// errors.go
+	// imports.go
 	// nodereplacements.go
 	// nodetype.go
-	// packagelocation.go
 	// parse.go
 	// path.go
 	// pathitem.go

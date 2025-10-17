@@ -108,7 +108,7 @@ type RewriteFileFunc func(fset *token.FileSet, pkg *ast.Package, astFile *ast.Fi
 //
 // Parameters:
 //   - path: File or directory path. Append "..." for recursive directory traversal.
-//           Example: "./..." processes all .go files in the current directory and subdirectories.
+//     Example: "./..." processes all .go files in the current directory and subdirectories.
 //   - verboseOut: Writer for verbose logging (nil to disable)
 //   - resultOut: Writer for rewritten source (nil to write back to original files)
 //   - rewriteFileFunc: Function called for each file to perform transformations
@@ -228,7 +228,7 @@ func rewriteFile(fset *token.FileSet, pkg *ast.Package, filePath string, verbose
 		_, err = resultOut.Write(rewritten)
 		return err
 	}
-	return os.WriteFile(filePath, rewritten, 0600)
+	return os.WriteFile(filePath, rewritten, 0644)
 }
 
 func filterOutTests(info os.FileInfo) bool {
