@@ -64,6 +64,7 @@ func RewriteWithReplacements(path string, verboseOut, resultOut io.Writer, debug
 			return nil, nil
 		}
 
+		// #nosec G304 - filePath comes from parsed AST, not user input
 		source, err := os.ReadFile(filePath)
 		if err != nil {
 			return nil, err
