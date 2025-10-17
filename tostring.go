@@ -55,6 +55,18 @@ func exprString(expr ast.Expr, qualifyer string) string {
 		return "(" + exprString(e.X, qualifyer) + ")"
 	case *ast.IndexExpr:
 		return exprString(e.X, qualifyer) + "[" + exprString(e.Index, qualifyer) + "]"
+	case *ast.IndexListExpr:
+		var b strings.Builder
+		b.WriteString(exprString(e.X, qualifyer))
+		b.WriteByte('[')
+		for i, index := range e.Indices {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(exprString(index, qualifyer))
+		}
+		b.WriteByte(']')
+		return b.String()
 	case *ast.SliceExpr:
 		return "TODO ast.SliceExpr"
 	case *ast.TypeAssertExpr:
@@ -199,6 +211,11 @@ func TypeExprNameQualifyers(expr ast.Expr, qualifyers map[string]struct{}) {
 		// Unqualified name
 	case *ast.SelectorExpr:
 		qualifyers[ExprString(e.X)] = struct{}{}
+	case *ast.IndexListExpr:
+		TypeExprNameQualifyers(e.X, qualifyers)
+		for _, index := range e.Indices {
+			TypeExprNameQualifyers(index, qualifyers)
+		}
 	case *ast.StarExpr:
 		TypeExprNameQualifyers(e.X, qualifyers)
 	case *ast.Ellipsis:

@@ -72,6 +72,9 @@ func visitNode(visitor Visitor, cursor Cursor) bool {
 	case *ast.IndexExpr:
 		return visitor.VisitIndexExpr(x, cursor)
 
+	case *ast.IndexListExpr:
+		return visitor.VisitIndexListExpr(x, cursor)
+
 	case *ast.SliceExpr:
 		return visitor.VisitSliceExpr(x, cursor)
 

@@ -17,6 +17,7 @@ func (VisitorImpl) VisitCompositeLit(*ast.CompositeLit, Cursor) bool     { retur
 func (VisitorImpl) VisitParenExpr(*ast.ParenExpr, Cursor) bool           { return true }
 func (VisitorImpl) VisitSelectorExpr(*ast.SelectorExpr, Cursor) bool     { return true }
 func (VisitorImpl) VisitIndexExpr(*ast.IndexExpr, Cursor) bool           { return true }
+func (VisitorImpl) VisitIndexListExpr(*ast.IndexListExpr, Cursor) bool   { return true }
 func (VisitorImpl) VisitSliceExpr(*ast.SliceExpr, Cursor) bool           { return true }
 func (VisitorImpl) VisitTypeAssertExpr(*ast.TypeAssertExpr, Cursor) bool { return true }
 func (VisitorImpl) VisitCallExpr(*ast.CallExpr, Cursor) bool             { return true }

@@ -49,6 +49,9 @@ func NodeType(node ast.Node) string {
 	case *ast.IndexExpr:
 		return "IndexExpr"
 
+	case *ast.IndexListExpr:
+		return "IndexListExpr"
+
 	case *ast.SliceExpr:
 		return "SliceExpr"
 

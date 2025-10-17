@@ -18,6 +18,7 @@ type Visitor interface {
 	VisitParenExpr(*ast.ParenExpr, Cursor) bool
 	VisitSelectorExpr(*ast.SelectorExpr, Cursor) bool
 	VisitIndexExpr(*ast.IndexExpr, Cursor) bool
+	VisitIndexListExpr(*ast.IndexListExpr, Cursor) bool
 	VisitSliceExpr(*ast.SliceExpr, Cursor) bool
 	VisitTypeAssertExpr(*ast.TypeAssertExpr, Cursor) bool
 	VisitCallExpr(*ast.CallExpr, Cursor) bool
