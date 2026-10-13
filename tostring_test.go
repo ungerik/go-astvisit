@@ -112,29 +112,60 @@ func TestExprString_CallExpr(t *testing.T) {
 	}
 }
 
+// ExprString is used to generate code, so a function literal must be written
+// with its body, an elided body like "{ ... }" is not valid Go.
+// Like gofmt, a short body stays on the line and a longer one gets a statement per line,
+// independent of the line breaks in the source and of the FileSet the positions are from.
 func TestExprString_FuncLit(t *testing.T) {
-	code := `package test; var _ = func(x int) string { return "" }`
-
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "test.go", code, 0)
-	if err != nil {
-		t.Fatalf("Failed to parse: %v", err)
+	tests := []struct {
+		expr     string
+		expected string
+	}{
+		{expr: `func(x int) string { return "" }`, expected: `func(x int) string { return "" }`},
+		{expr: "func() {\n}", expected: "func() {}"},
+		{expr: "func(x int) int {\n\treturn x * 2\n}", expected: "func(x int) int { return x * 2 }"},
+		{
+			expr:     "func() { a := []int{\n1, 2,\n}; if a != nil { f(func() {}) } }",
+			expected: "func() {\n\ta := []int{1, 2}\n\tif a != nil {\n\t\tf(func() {})\n\t}\n}",
+		},
 	}
 
-	// Get the expression from the var declaration
-	decl := file.Decls[0].(*ast.GenDecl)
-	spec := decl.Specs[0].(*ast.ValueSpec)
-	expr := spec.Values[0]
-
-	result := ExprString(expr)
-	expected := "func(x int) string { ... }"
-	if result != expected {
-		t.Errorf("ExprString() = %q, want %q", result, expected)
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			// Positions after another file like in a FileSet of a whole package
+			fset := token.NewFileSet()
+			fset.AddFile("other.go", -1, 10000)
+			expr, err := parser.ParseExprFrom(fset, "test.go", tt.expr, 0)
+			if err != nil {
+				t.Fatalf("Failed to parse: %v", err)
+			}
+			result := ExprString(expr)
+			if result != tt.expected {
+				t.Errorf("ExprString() = %q, want %q", result, tt.expected)
+			}
+		})
 	}
 }
 
-// ExprString is used to generate code, so the result must be valid Go
-// that parses back to the same expression.
+// customExpr is an ast.Expr implementation that ExprString doesn't know
+type customExpr struct {
+	*ast.Ident
+}
+
+// An unknown expression type can't be written as Go source.
+// Like types.ExprString, the result must name the type
+// instead of panicking like go/printer.
+func TestExprString_UnknownExprType(t *testing.T) {
+	result := ExprString(customExpr{ast.NewIdent("x")})
+	if result != "(ast: astvisit.customExpr)" {
+		t.Errorf("ExprString() = %q, want %q", result, "(ast: astvisit.customExpr)")
+	}
+}
+
+// ExprString is used to compare and generate code, so the result must be valid Go
+// on a single line that parses back to the same expression,
+// without normalizations like interface{} to any,
+// and formatted like gofmt formats single-line code.
 func TestExprString_ValidGoSyntax(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -145,11 +176,17 @@ func TestExprString_ValidGoSyntax(t *testing.T) {
 		{name: "send-only channel", expr: `chan<- int`, expected: "chan<- int"},
 		{name: "receive-only channel", expr: `<-chan int`, expected: "<-chan int"},
 		{name: "channel of receive-only channel", expr: `chan<- <-chan int`, expected: "chan<- <-chan int"},
-		{name: "interface with method", expr: `interface{ String() string }`, expected: "interface { String() string }"},
-		{name: "interface with embedded type and method", expr: `interface{ io.Reader; Close() error }`, expected: "interface { io.Reader; Close() error }"},
-		{name: "type constraint", expr: `interface{ ~int | ~string }`, expected: "interface { ~int | ~string }"},
-		{name: "slice literal", expr: `[]int{1, 2, 3}`, expected: "[]int{ 1, 2, 3 }"},
-		{name: "map literal", expr: `map[string]int{"a": 1, "b": 2}`, expected: `map[string]int{ "a": 1, "b": 2 }`},
+		{name: "empty interface", expr: `interface{}`, expected: "interface{}"},
+		{name: "interface with method", expr: `interface{ String() string }`, expected: "interface{ String() string }"},
+		{name: "interface with embedded type and method", expr: "interface {\n\tio.Reader\n\tClose() error\n}", expected: "interface{ io.Reader; Close() error }"},
+		{name: "type constraint", expr: `interface{ ~int | ~string }`, expected: "interface{ ~int | ~string }"},
+		{name: "empty struct", expr: `struct{}`, expected: "struct{}"},
+		{name: "struct with fields", expr: "struct {\n\tA, B int\n\tC string `json:\"c\"`\n}", expected: "struct{ A, B int; C string `json:\"c\"` }"},
+		{name: "slice literal", expr: `[]int{1, 2, 3}`, expected: "[]int{1, 2, 3}"},
+		{name: "nested literal with elided types", expr: "[]T{\n\t{a, b},\n\t{c, d},\n}", expected: "[]T{{a, b}, {c, d}}"},
+		{name: "map literal", expr: `map[string]int{"a": 1, "b": 2}`, expected: `map[string]int{"a": 1, "b": 2}`},
+		{name: "empty literal", expr: `map[string]interface{}{}`, expected: `map[string]interface{}{}`},
+		{name: "function literal", expr: `func(x int) int { return x * 2 }`, expected: "func(x int) int { return x * 2 }"},
 	}
 
 	for _, tt := range tests {
@@ -234,9 +271,9 @@ func TestExprStringWithExportedNameQualifyer_NestedTypes(t *testing.T) {
 		{expr: `[]Foo`, expected: "[]pkg.Foo"},
 		{expr: `func(f Foo) Bar`, expected: "func(f pkg.Foo) pkg.Bar"},
 		{expr: `func(Foo) (b Bar, err error)`, expected: "func(pkg.Foo) (b pkg.Bar, err error)"},
-		{expr: `struct{ Field Foo }`, expected: "struct { Field pkg.Foo }"},
-		{expr: `struct{ Foo }`, expected: "struct { pkg.Foo }"},
-		{expr: `interface{ Method(Foo) Bar }`, expected: "interface { Method(pkg.Foo) pkg.Bar }"},
+		{expr: `struct{ Field Foo }`, expected: "struct{ Field pkg.Foo }"},
+		{expr: `struct{ Foo }`, expected: "struct{ pkg.Foo }"},
+		{expr: `interface{ Method(Foo) Bar }`, expected: "interface{ Method(pkg.Foo) pkg.Bar }"},
 		{expr: `other.Foo`, expected: "other.Foo"},
 	}
 
