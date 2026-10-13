@@ -1,0 +1,231 @@
+# API refactoring: open questions
+
+Result of a critical review of the exported API.
+Compatibility with current callers is not a constraint, the goal is the best possible API.
+Each section states the problem, a proposal, and the questions to decide before implementing.
+
+Items marked "(confirmed)" were verified with a throwaway test.
+
+Keep as is (not up for refactoring):
+
+- Text-level `NodeReplacements` (preserves comments and formatting), `PosNode`, `NodeRange`
+- go-command-compatible file selection (go.mod `ignore`, nested modules, build constraints),
+  atomic per-package writes, CRLF preservation
+- `Path`/`PathItem` tracking and root replacement in `Visit`
+- `ErrPackageNotFound` sentinel
+
+Suggested order: the small fixes (5, 9, 10) first, then 1 + 2 together
+(they share the new `Package` type), then 3, and 4 last.
+
+## 1. Rewrite API: too many entry points with positional parameters
+
+Problem:
+
+- 4 entry points (`Rewrite`, `RewriteWithReplacements`, `RewritePackages`, `RewriteDryRun`),
+  3 callback types, 2 `.PackageFunc()` adapters.
+  Capabilities are spread unevenly: dry-run only works with package funcs,
+  debug only exists in `RewriteWithReplacements`.
+- `RewriteWithReplacements(path, verboseOut, resultOut io.Writer, debug bool, f)` (`rewrite.go:82`):
+  two adjacent `io.Writer`s still compile when swapped, plus a bare bool.
+  `debug` is a runtime error unless `resultOut != nil`.
+- `resultOut` concatenates every rewritten file into one writer without separator,
+  which is only meaningful for a single file.
+- `localImportPrefixes` can't be passed: `applyReplacements` calls `formatFileWithImports`
+  without them (`rewrite.go:106`). Anyone needing local import grouping must write their own walker.
+
+Proposal:
+
+```go
+type FileChange struct{ Path string; Old, New []byte }
+func Rewrite(pattern string, log io.Writer, f PackageFunc) ([]FileChange, error)
+func RewriteDryRun(pattern string, log io.Writer, f PackageFunc) ([]FileChange, error)
+```
+
+`resultOut` and `debug` disappear: a dry run returns `Old`/`New` and the caller prints or diffs them.
+`DebugApply` stays for direct use, so debug markers can't be written into source files by misuse.
+
+Open questions:
+
+- [ ] Is losing the conflict-marker debug view of `RewriteWithReplacements` acceptable,
+      or should there be a debug adapter that only works with `RewriteDryRun`?
+- [ ] Should `Rewrite` return `[]FileChange` (with `Old`/`New` held in memory)
+      or only the changed paths?
+- [ ] Keep `log io.Writer`, or use `*slog.Logger`?
+- [ ] Should multiple patterns be accepted, like the go command (`Rewrite(patterns []string, ...)`)?
+- [ ] Should test files stay hard-coded as excluded (and a `_test.go` path an error),
+      or become an option?
+
+## 2. Callbacks receive the deprecated `*ast.Package` but not the source
+
+Problem:
+
+- `RewriteFileFunc` and `FileReplacementsFunc` (`rewrite.go:29`, `:144`) take
+  `(fset, *ast.Package, *ast.File, filePath, verboseOut)`.
+  `ast.Package` is deprecated since Go 1.22, `ParsePackage` returns it too (`parse.go:126`).
+- The source bytes are already kept in `ParsedPackage.Sources`, but per-file callbacks
+  don't get them, so a callback that needs the source must read the file again.
+- `ParsedPackage` holds three parallel collections: `Files` map, `Sources` map, `FilePaths` slice.
+  `FilePaths` means "files to rewrite", a rewrite concern in a parse result.
+- `verboseOut` doesn't need to be in every callback signature, closures can capture their own logger.
+- `ParsePackage` with a nil filter includes `_test.go` files, so any directory
+  with an external `p_test` package fails with "2 packages found".
+
+Proposal:
+
+```go
+type File struct{ Path string; Syntax *ast.File; Source []byte }
+type Package struct {
+	Dir, Name string
+	Fset      *token.FileSet
+	Files     []*File // sorted by Path
+	Targets   []*File // files to rewrite: all, or the single named file
+}
+type PackageFunc func(pkg *Package) (map[string][]byte, error)
+func PerFile(f func(pkg *Package, file *File) ([]byte, error)) PackageFunc
+func PerFileReplacements(f func(pkg *Package, file *File) (NodeReplacements, Imports, error), localImportPrefixes ...string) PackageFunc
+func ParsePackage(fset *token.FileSet, dir string, filter func(fs.DirEntry) bool) (*Package, error)
+```
+
+Open questions:
+
+- [ ] `Targets []*File` field, a `Target bool` per `File`, or a separate callback parameter?
+- [ ] Should `PackageFunc` return `map[string][]byte`, `map[*File][]byte`, or set a field on `File`?
+- [ ] Should a nil `ParsePackage` filter mean "non-test files" like `go build`?
+- [ ] Filter on `fs.DirEntry` (no stat per file) or just the file name?
+- [ ] Should `ParsePackage` return the external `_test` package as well when tests are included?
+
+## 3. `Imports` is a set of raw strings
+
+Problem (`imports.go:40`, `Imports map[string]struct{}` of import lines):
+
+- Zero value panics: `var imps Imports; imps.Add(...)` (confirmed).
+  The zero value of `NodeReplacements` works, so the two collections behave differently.
+- `Contains` matches a whole line or a bare path, `Remove` only the exact line.
+  `"fmt"` and `fmt "fmt"` are different entries.
+- Lines are split by searching for `"` instead of `strconv.Unquote`,
+  so valid backquoted import paths fail.
+- `FormatFileWithImports` takes an `fset` that its docs say is not used (`imports.go:253`).
+- `LocatePackage` has three variants (`imports.go:109–183`) and each call runs `packages.Load`,
+  which starts a `go list` process. Locating N imports starts N processes.
+
+Proposal:
+
+```go
+type Import struct{ Name, Path string } // Name "" = default import
+type Imports map[Import]struct{}
+func (imps *Imports) Add(path string) // creates the map if nil
+func (imps *Imports) AddNamed(name, path string)
+func ImportOf(spec *ast.ImportSpec) Import
+func FormatSource(src []byte, imps Imports, localImportPrefixes ...string) ([]byte, error)
+func LocatePackages(dir string, importPaths ...string) (map[string]*PackageLocation, error) // one go list
+type PackageLocation struct{ Name, Dir string; Std bool } // was PkgName, SourcePath
+```
+
+Open questions:
+
+- [ ] `map[Import]struct{}` or a deduplicating `[]Import`?
+- [ ] How to handle the same path added with two different names?
+- [ ] Keep a parser for import lines (`ParseImportLine`) at all, once `Import` is structured?
+- [ ] Should `LocatePackages` return partial results plus an error when some paths can't be resolved?
+- [ ] The global `imports.LocalPrefix` mutex only protects calls through this package.
+      Is there a way to pass local prefixes to `golang.org/x/tools/imports` without the global?
+
+## 4. The 56-method `Visitor` interface
+
+Problem:
+
+- A typo or wrong signature in an override (`VisitFuncdecl`, or missing the `Cursor` parameter)
+  compiles because `VisitorImpl` is embedded, and is silently never called.
+- No category handlers: handling every statement means overriding about 20 methods,
+  there is no `ast.Stmt` or `ast.Expr` hook.
+- `post` uses the same interface but its bool result is ignored (`visit.go:42`),
+  and the whole traversal can't be stopped early (`astutil.Apply` supports this).
+- `Cursor` is an interface and a new cursor is allocated for every pre and post callback.
+- x/tools now has `inspector.All[N]` and `inspector.Cursor` for typed read-only traversal.
+  What this package adds is typed traversal plus modification plus `Path`.
+
+Proposal:
+
+```go
+func Visit(root ast.Node, handlers ...Handler) ast.Node
+func Pre[N ast.Node](fn func(N, *Cursor) Action) Handler // N may be ast.Stmt, ast.Expr, ...
+func Post[N ast.Node](fn func(N, *Cursor)) Handler
+type Action int // Continue, SkipChildren, Stop
+type Cursor struct{ /* concrete type, same methods as today */ }
+```
+
+The node type is inferred from the function parameter, so a typo can't compile,
+and interface types give category handlers for free.
+
+Open questions:
+
+- [ ] Replace the `Visitor` interface, or offer the generic handlers next to it?
+- [ ] Dispatch cost: linear type checks per handler, or a lookup by node type?
+- [ ] `Action` enum or keep `bool` (and lose `Stop`)?
+- [ ] Concrete `*Cursor` struct (no allocation per callback, no mocking) or keep the interface?
+- [ ] Keep `VisitPackage` / `*ast.Package` support at all, given the deprecation?
+
+## 5. `NodeReplacements.Apply` reorders the caller's slice
+
+`apply` sorts the slice in place through a value receiver (`nodereplacements.go:188`).
+After `Apply`, `r[0]` was a different replacement (confirmed).
+
+- [x] Sort a copy instead.
+- [x] Unexport `Sort`, since `Apply` and `DebugApply` already sort.
+
+## 6. `NodeReplacements` verbs don't match `Cursor`
+
+`Cursor` has `Replace`/`Delete`/`InsertBefore`/`InsertAfter`,
+`NodeReplacements` has `AddReplacement`/`AddRemoval`/`AddInsertAfter`/`Add`.
+There is no insert-before, the workaround `AddReplacement(PosNode(pos), ...)` is hard to discover.
+
+- [ ] Rename to the same four verbs as `Cursor`, plus `Append` for merging?
+- [ ] Keep `Replacement any` (string, `[]byte`, or anything `format.Node` accepts),
+      which fails only at `Apply` time for unsupported types?
+- [ ] Keep `debugID ...string` as a variadic optional parameter
+      (several values are silently concatenated)?
+
+## 7. `ExprString` is named like a printer but changes the code
+
+`interface{}` becomes `any` (confirmed), `T{ a, b }` and `struct { A int }` don't match gofmt spacing,
+`FuncLit` bodies become `{ ... }`, and unknown types produce `"TODO %T"`.
+
+- [ ] Print faithfully (gofmt-equal), or rename/document it as a compact display form?
+- [ ] Should the `{ ... }` elision of function literal bodies stay?
+
+## 8. Misspelled exported names
+
+- [ ] `ExprStringWithExportedNameQualifyer` → `QualifiedExprString`?
+- [ ] `TypeExprNameQualifyers(expr, map)` → `Qualifiers(expr) []string`,
+      returning the result instead of filling a passed-in map?
+
+## 9. `PathItem.String` has a pointer receiver
+
+`pathitem.go:54`: `fmt.Print(path[i])` prints `{Body -1 <nil> BlockStmt}` (confirmed).
+
+- [x] Use a value receiver.
+- [ ] Is the `PathItem.Type` string field needed, or can it be derived with `NodeType(Node)`?
+
+## 10. `NodeType` and `Visit` panic on unknown node types
+
+`NodeType(PosNode(1))` panics (confirmed), `NodeRange` too (`nodetype.go:192`).
+`Visit` will panic (`visit.go:245`) on any node type go/ast adds in the future.
+Go 1.26 already added `*ast.Directive`, which `NodeType` didn't know
+(it isn't part of the tree, so `Visit` never reaches it).
+
+- [x] Fall back to the `%T` type name in `NodeType`, without the `*ast.` prefix.
+- [x] Should `Visit` skip unknown node types (continue traversal) instead of panicking?
+      Yes: it traverses them without calling a visitor method.
+
+## 11. `FprintfVerbose` is exported
+
+`rewrite.go:456`: a generic helper exported only because callbacks receive `verboseOut`.
+
+- [ ] Unexport it once callbacks no longer take `verboseOut` (see 1 and 2).
+
+## 12. Inconsistent source input types
+
+`ParseDeclarations` and `ParseStatements` take `string`, the formatting functions take `[]byte`.
+
+- [ ] Standardize on `[]byte`, `string`, or a generic `string | []byte`?
+- [ ] Should `ParseDeclarations`/`ParseStatements` return a struct instead of three values?
