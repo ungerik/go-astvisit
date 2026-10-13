@@ -242,11 +242,11 @@ like nodes of another file or without a position, return an error.
 Format source with specific imports:
 
 ```go
-imports := make(astvisit.Imports)
-imports.Add(`"fmt"`)
-imports.Add(`math "math/big"`)  // Named import
+var imports astvisit.Imports
+imports.Add("fmt")
+imports.AddNamed("bigmath", "math/big") // Named import
 
-formatted, err := astvisit.FormatFileWithImports(fset, source, imports, "mycompany.com")
+formatted, err := astvisit.FormatSource(source, imports, "mycompany.com")
 ```
 
 If imports were added, they are grouped goimports-style,

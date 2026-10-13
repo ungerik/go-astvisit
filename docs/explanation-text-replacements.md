@@ -129,7 +129,7 @@ otherwise                                     → write format(rewritten, import
 
 Formatting both sides before comparing means a replacement that only changes
 whitespace doesn't touch the file, and a file that wasn't gofmt-clean doesn't
-get reformatted by a no-op run. `format` here is `FormatFileWithImports`: gofmt
+get reformatted by a no-op run. `format` here is `FormatSource`: gofmt
 output, plus goimports-style grouping when it had to add a missing import.
 
 ## Trade-offs

@@ -55,13 +55,13 @@ excluded by an `ignore` directive in `go.mod`.
    func replaceDateLayout(fset *token.FileSet, pkg *ast.Package, astFile *ast.File, filePath string, verboseOut io.Writer) (astvisit.NodeReplacements, astvisit.Imports, error) {
    	var (
    		replacements astvisit.NodeReplacements
-   		imports      = make(astvisit.Imports)
+   		imports      astvisit.Imports
    	)
    	ast.Inspect(astFile, func(node ast.Node) bool {
    		lit, ok := node.(*ast.BasicLit)
    		if ok && lit.Kind == token.STRING && lit.Value == `"2006-01-02"` {
    			replacements.AddReplacement(lit, "time.DateOnly", "date-layout")
-   			imports.Add(`"time"`)
+   			imports.Add("time")
    		}
    		return true
    	})
@@ -249,7 +249,7 @@ func renameFunc(pkg *astvisit.ParsedPackage, verboseOut io.Writer) (map[string][
 		if err != nil {
 			return nil, err
 		}
-		rewritten[filePath], err = astvisit.FormatFileWithImports(pkg.Fset, source, nil)
+		rewritten[filePath], err = astvisit.FormatSource(source, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -267,9 +267,9 @@ renamed too. Use `gopls rename` when you need a rename that understands scopes.
 Files missing from the returned map, or mapped to `nil`, are not changed. If
 the callback returns an error, none of that package's files are written.
 
-To group local imports separately, call `FormatFileWithImports` with your
+To group local imports separately, call `FormatSource` with your
 module prefix, for example
-`astvisit.FormatFileWithImports(pkg.Fset, source, imports, "example.com/myproject")`.
+`astvisit.FormatSource(source, imports, "example.com/myproject")`.
 `RewriteWithReplacements` doesn't pass local prefixes, so this needs
 `RewritePackages`.
 
@@ -368,7 +368,7 @@ to rewrite it.
   [`Rewrite`](https://pkg.go.dev/github.com/ungerik/go-astvisit#Rewrite),
   [`RewritePackages`](https://pkg.go.dev/github.com/ungerik/go-astvisit#RewritePackages),
   [`NodeReplacements`](https://pkg.go.dev/github.com/ungerik/go-astvisit#NodeReplacements),
-  [`FormatFileWithImports`](https://pkg.go.dev/github.com/ungerik/go-astvisit#FormatFileWithImports)
+  [`FormatSource`](https://pkg.go.dev/github.com/ungerik/go-astvisit#FormatSource)
 - [How to check in CI that no file needs rewriting](howto-check-generated-code-in-ci.md)
 - [Why NodeReplacements edits source text instead of reprinting the AST](explanation-text-replacements.md)
 - [How the Rewrite functions choose files and when they write](explanation-file-selection-writes.md)

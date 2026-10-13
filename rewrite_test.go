@@ -217,7 +217,7 @@ func TestRewriteWithReplacements_FormattingOnlyIsUnchanged(t *testing.T) {
 		func(fset *token.FileSet, pkg *ast.Package, astFile *ast.File, filePath string, verboseOut io.Writer) (NodeReplacements, Imports, error) {
 			var repls NodeReplacements
 			repls.AddReplacement(astFile.Decls[0], "func a() {}")
-			return repls, Imports{`"fmt"`: {}}, nil
+			return repls, Imports{{Path: "fmt"}: {}}, nil
 		},
 	)
 	require.NoError(t, err)
@@ -659,9 +659,9 @@ func TestRewrite_MalformedGoModIsError(t *testing.T) {
 	})
 }
 
-// An invalid import line is a mistake in the returned imports,
+// An invalid import is a mistake in the returned imports,
 // not in the replacements, so the error must not blame the replacements.
-func TestRewriteWithReplacements_InvalidImportLineError(t *testing.T) {
+func TestRewriteWithReplacements_InvalidImportError(t *testing.T) {
 	const src = "package p\n\nfunc a() {}\n"
 	filePath := filepath.Join(t.TempDir(), "p.go")
 	writeTestFiles(t, filepath.Dir(filePath), map[string]string{"p.go": src})
@@ -670,12 +670,12 @@ func TestRewriteWithReplacements_InvalidImportLineError(t *testing.T) {
 		func(fset *token.FileSet, pkg *ast.Package, astFile *ast.File, filePath string, verboseOut io.Writer) (NodeReplacements, Imports, error) {
 			var repls NodeReplacements
 			repls.AddReplacement(astFile.Decls[0], "func b() {}")
-			imports := make(Imports)
-			imports.Add("fmt") // Missing quotes
+			var imports Imports
+			imports.Add(`"fmt"`) // Quoted like an import line
 			return repls, imports, nil
 		},
 	)
-	require.EqualError(t, err, "invalid quoted import: fmt")
+	require.EqualError(t, err, `malformed import path "\"fmt\"": invalid char '"'`)
 	requireFileContent(t, src, filePath)
 }
 

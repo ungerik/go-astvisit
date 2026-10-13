@@ -25,7 +25,7 @@ import (
 //
 // Returns:
 //   - NodeReplacements: Set of node-level replacements to apply
-//   - Imports: Set of import statements to ensure are present
+//   - Imports: Set of imports to ensure are present
 //   - error: Any error that occurred during processing
 type FileReplacementsFunc func(fset *token.FileSet, pkg *ast.Package, astFile *ast.File, filePath string, verboseOut io.Writer) (NodeReplacements, Imports, error)
 
@@ -64,7 +64,7 @@ func (f FileReplacementsFunc) packageFunc(debug bool) RewritePackageFunc {
 //   - fileReplacementsFunc: Function called for each file to compute replacements
 //
 // The replacements are applied to the source that was parsed, the result is formatted
-// with FormatFileWithImports. A file is not changed if the formatted result equals
+// with FormatSource. A file is not changed if the formatted result equals
 // the source formatted with the same imports, so replacements that change nothing
 // don't reformat a file. See Rewrite for how files are selected and written.
 //
@@ -76,8 +76,8 @@ func (f FileReplacementsFunc) packageFunc(debug bool) RewritePackageFunc {
 //	    func(fset *token.FileSet, pkg *ast.Package, file *ast.File,
 //	         filePath string, verboseOut io.Writer) (NodeReplacements, Imports, error) {
 //	        var replacements NodeReplacements
-//	        imports := make(Imports)
-//	        // Compute replacements...
+//	        var imports Imports
+//	        // Compute replacements and imports.Add("fmt") ...
 //	        return replacements, imports, nil
 //	    })
 func RewriteWithReplacements(path string, verboseOut, resultOut io.Writer, debug bool, fileReplacementsFunc FileReplacementsFunc) error {
@@ -104,11 +104,11 @@ func applyReplacements(fset *token.FileSet, filePath string, source []byte, repl
 	if bytes.Equal(source, rewritten) {
 		return nil, nil
 	}
-	rewritten, err = formatFileWithImports(filePath, rewritten, imports)
+	rewritten, err = formatSource(filePath, rewritten, imports)
 	if err != nil {
 		// An error of the imports would also happen for the parsed source
 		// and is not an error of the replacements
-		if _, sourceErr := formatFileWithImports(filePath, source, imports); sourceErr != nil {
+		if _, sourceErr := formatSource(filePath, source, imports); sourceErr != nil {
 			return nil, sourceErr
 		}
 		// The error positions are in the rewritten source, not in the file
@@ -119,7 +119,7 @@ func applyReplacements(fset *token.FileSet, filePath string, source []byte, repl
 		// no need to format the source to compare
 		return nil, nil
 	}
-	formattedSource, err := formatFileWithImports(filePath, source, imports)
+	formattedSource, err := formatSource(filePath, source, imports)
 	if err != nil {
 		return nil, err
 	}
