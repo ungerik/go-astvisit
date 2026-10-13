@@ -6,11 +6,10 @@ Each section states the problem, a proposal, and the questions to decide before 
 
 Items marked "(confirmed)" were verified with a throwaway test.
 
-Status checked on 2026-10-13 against commit `2eda386`:
-solved 5, 9 (first question) and 10. Everything else is still open,
-the exported API is unchanged. Line numbers refer to that commit.
-
-Later on 2026-10-13: solved 3 and 7 (uncommitted at the time of writing).
+Status on 2026-10-13: solved 3 (commit `c655dc8`), 5 (commit `4247005`),
+7 (commit `95fdd3b`), 9 (first question) and 10 (commit `46bee62`).
+Open: 1, 2, 4, 6, 8, 11, 12 and the second question of 9.
+Line numbers refer to commit `2eda386`.
 
 Keep as is (not up for refactoring):
 
@@ -20,7 +19,7 @@ Keep as is (not up for refactoring):
 - `Path`/`PathItem` tracking and root replacement in `Visit`
 - `ErrPackageNotFound` sentinel
 
-Suggested order: the small fixes (5, 9, 10) and 3 and 7 are done. Next 1 + 2 together
+Suggested order for the open items: 1 + 2 together
 (they share the new `Package` type), and 4 last.
 
 ## 1. Rewrite API: too many entry points with positional parameters
