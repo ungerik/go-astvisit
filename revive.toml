@@ -1,0 +1,38 @@
+# revive configuration: the default rules of revive v1.17.1 (defaults.toml)
+# with exceptions for the conventions of this repository.
+# Run: go run github.com/mgechev/revive@v1.17.1 -config revive.toml -set_exit_status ./...
+
+ignore-generated-header = false
+severity = "warning"
+confidence = 0.8
+error-code = 0
+warning-code = 0
+
+[rule.blank-imports]
+[rule.context-as-argument]
+[rule.context-keys-type]
+[rule.dot-imports]
+[rule.empty-block]
+[rule.error-naming]
+[rule.error-return]
+[rule.error-strings]
+[rule.errorf]
+[rule.exported]
+[rule.increment-decrement]
+[rule.indent-error-flow]
+[rule.package-comments]
+[rule.range]
+[rule.receiver-naming]
+[rule.redefines-builtin-id]
+[rule.superfluous-else]
+[rule.time-naming]
+[rule.unexported-return]
+[rule.unreachable-code]
+[rule.var-declaration]
+[rule.var-naming]
+
+# Test callbacks implement fixed signatures like RewriteFileFunc,
+# FileReplacementsFunc, and the Visitor methods. They keep all parameter
+# names, like the examples in the docs, instead of renaming unused ones to _.
+[rule.unused-parameter]
+exclude = ["TEST"]

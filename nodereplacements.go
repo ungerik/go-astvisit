@@ -27,7 +27,10 @@ import (
 // because the End of a /*-style comment is too early for CRLF line endings.
 type PosNode token.Pos
 
+// Pos returns the position p.
 func (p PosNode) Pos() token.Pos { return token.Pos(p) }
+
+// End returns the position p, a PosNode has no width.
 func (p PosNode) End() token.Pos { return token.Pos(p) }
 
 // insertAfter is the zero-width node at the end of Node
@@ -45,6 +48,7 @@ func (n insertAfter) Pos() token.Pos { return n.Node.End() }
 // of all contained nodes.
 type NodeRange []ast.Node
 
+// Pos returns the smallest Pos of the nodes, or token.NoPos for an empty range.
 func (r NodeRange) Pos() token.Pos {
 	switch len(r) {
 	case 0:
@@ -52,15 +56,16 @@ func (r NodeRange) Pos() token.Pos {
 	case 1:
 		return r[0].Pos()
 	}
-	min := token.Pos(math.MaxInt)
+	minPos := token.Pos(math.MaxInt)
 	for _, n := range r {
-		if p := n.Pos(); p < min {
-			min = p
+		if p := n.Pos(); p < minPos {
+			minPos = p
 		}
 	}
-	return min
+	return minPos
 }
 
+// End returns the largest End of the nodes, or token.NoPos for an empty range.
 func (r NodeRange) End() token.Pos {
 	switch len(r) {
 	case 0:
@@ -68,13 +73,13 @@ func (r NodeRange) End() token.Pos {
 	case 1:
 		return r[0].End()
 	}
-	max := token.Pos(-math.MaxInt)
+	maxEnd := token.Pos(-math.MaxInt)
 	for _, n := range r {
-		if p := n.End(); p > max {
-			max = p
+		if p := n.End(); p > maxEnd {
+			maxEnd = p
 		}
 	}
-	return max
+	return maxEnd
 }
 
 // NodeReplacement represents a single node replacement operation in source code.

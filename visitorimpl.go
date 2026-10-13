@@ -18,6 +18,8 @@ import "go/ast"
 //	}
 type VisitorImpl struct{}
 
+//revive:disable:exported The methods are documented by VisitorImpl and the Visitor interface
+
 func (VisitorImpl) VisitComment(*ast.Comment, Cursor) bool               { return true }
 func (VisitorImpl) VisitCommentGroup(*ast.CommentGroup, Cursor) bool     { return true }
 func (VisitorImpl) VisitField(*ast.Field, Cursor) bool                   { return true }
