@@ -2,6 +2,7 @@ package astvisit
 
 import (
 	"go/ast"
+	"slices"
 
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -33,6 +34,9 @@ import (
 type Cursor interface {
 	// Path returns the full path from the root node to the current node,
 	// including parent field names and slice indices at each level.
+	// The returned Path is a copy that is not changed by the further traversal.
+	// Copying allocates, so avoid calling Path for every node of a large AST
+	// when ParentField, ParentFieldIndex, or Parent is enough.
 	Path() Path
 
 	// Node returns the current node being visited.
@@ -43,7 +47,8 @@ type Cursor interface {
 	Parent() ast.Node
 
 	// ParentField returns the name of the parent node's struct field
-	// that contains the current node.
+	// that contains the current node, or an empty string if
+	// the current node is the root.
 	//
 	// Special case: If the parent is *ast.Package and the current node is
 	// *ast.File, ParentField returns the filename.
@@ -89,19 +94,29 @@ type Cursor interface {
 	InsertBefore(n ast.Node)
 }
 
-func newCursor(c *astutil.Cursor, path Path) Cursor {
-	return &cursor{c, path}
+func newCursor(c *astutil.Cursor, path Path, root *ast.Node) Cursor {
+	return &cursor{c, path, root}
 }
 
 // cursor implements the Cursor inteface by
-// wrapping an astutil.Cursor together with a Path.
+// wrapping an astutil.Cursor together with a Path
+// and the root node result of Visit.
 type cursor struct {
 	cursor *astutil.Cursor
 	path   Path
+	root   *ast.Node
+}
+
+// isRoot reports if the current node is the root node passed to Visit.
+// astutil.Apply wraps the root in an internal parent node
+// that must neither be returned nor modified via the astutil.Cursor.
+func (c *cursor) isRoot() bool {
+	return len(c.path) == 1
 }
 
 func (c *cursor) Path() Path {
-	return c.path
+	// Clone because Visit reuses the backing array of c.path
+	return slices.Clone(c.path)
 }
 
 func (c *cursor) Node() ast.Node {
@@ -109,10 +124,16 @@ func (c *cursor) Node() ast.Node {
 }
 
 func (c *cursor) Parent() ast.Node {
+	if c.isRoot() {
+		return nil
+	}
 	return c.cursor.Parent()
 }
 
 func (c *cursor) ParentField() string {
+	if c.isRoot() {
+		return ""
+	}
 	return c.cursor.Name()
 }
 
@@ -121,10 +142,23 @@ func (c *cursor) ParentFieldIndex() int {
 }
 
 func (c *cursor) Replace(n ast.Node) {
+	if c.isRoot() {
+		// Visit returns *c.root instead of the result of astutil.Apply,
+		// so every root replacement must be stored there.
+		// astutil.Cursor.Replace would also panic for an *ast.File root
+		// because it expects an *ast.Package as parent of every file
+		*c.root = n
+		return
+	}
 	c.cursor.Replace(n)
 }
 
 func (c *cursor) Delete() {
+	if c.isRoot() {
+		// Same panic as astutil.Cursor.Delete for other nodes that are not
+		// part of a slice, it would fail with a type assertion for an *ast.File root
+		panic("Delete node not contained in slice")
+	}
 	c.cursor.Delete()
 }
 

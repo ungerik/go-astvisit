@@ -3,6 +3,7 @@ package astvisit
 import (
 	"fmt"
 	"go/ast"
+	"strings"
 )
 
 // NodeType returns the type name of an AST node as a string.
@@ -14,7 +15,10 @@ import (
 //   - *ast.IndexListExpr → "IndexListExpr"
 //   - nil → "<nil>"
 //
-// Panics if the node type is not recognized (should never happen for valid AST nodes).
+// For other node types, like *ast.Directive or PosNode of this package,
+// it returns the %T name without the "*ast." prefix:
+//   - *ast.Directive → "Directive"
+//   - PosNode → "astvisit.PosNode"
 func NodeType(node ast.Node) string {
 	switch node.(type) {
 	case nil:
@@ -189,5 +193,5 @@ func NodeType(node ast.Node) string {
 		return "Package"
 	}
 
-	panic(fmt.Sprintf("unknown ast.Node type %T", node))
+	return strings.TrimPrefix(fmt.Sprintf("%T", node), "*ast.")
 }

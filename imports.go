@@ -2,257 +2,300 @@ package astvisit
 
 import (
 	"bytes"
+	"cmp"
+	"errors"
 	"fmt"
 	"go/ast"
-	"go/build"
 	"go/format"
 	"go/parser"
 	"go/token"
+	"maps"
+	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
+	"golang.org/x/mod/module"
 	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 )
 
-// Imports is a set of import lines to be added to a Go source file.
-// Each entry is a complete import statement without the "import" keyword.
-//
-// Examples:
-//   - `"fmt"` - standard import
-//   - `"github.com/pkg/errors"` - third-party import
-//   - `math "math/big"` - named import
-//   - `. "github.com/onsi/ginkgo"` - dot import
-//
-// Use with FormatFileWithImports to ensure imports are present in source code.
+// Import is an import of a Go source file.
+type Import struct {
+	// Name is the explicit import name like "errs", "." or "_",
+	// or empty to use the package name.
+	Name string
+	// Path is the import path without quotes like "github.com/domonda/go-errs".
+	Path string
+}
+
+// ImportOf returns the Import of an import spec.
+// It returns an error if the path of the spec is not a valid string literal.
+func ImportOf(spec *ast.ImportSpec) (Import, error) {
+	path, err := strconv.Unquote(spec.Path.Value)
+	if err != nil {
+		return Import{}, fmt.Errorf("invalid import path %s: %w", spec.Path.Value, err)
+	}
+	imp := Import{Path: path}
+	if spec.Name != nil {
+		imp.Name = spec.Name.Name
+	}
+	return imp, nil
+}
+
+// String returns the import like in an import declaration,
+// for example `"fmt"` or `errs "github.com/domonda/go-errs"`.
+func (imp Import) String() string {
+	if imp.Name == "" {
+		return strconv.Quote(imp.Path)
+	}
+	return imp.Name + " " + strconv.Quote(imp.Path)
+}
+
+// check returns an error if imp can't be added to a Go source file,
+// for example for a quoted path like `"fmt"` instead of fmt.
+func (imp Import) check() error {
+	if err := checkImportPath(imp.Path); err != nil {
+		return err
+	}
+	if imp.Name != "" && imp.Name != "." && imp.Name != "_" && !token.IsIdentifier(imp.Name) {
+		return fmt.Errorf("invalid import name %q of import path %q", imp.Name, imp.Path)
+	}
+	return nil
+}
+
+// checkImportPath returns an error if path is not the import path of a package,
+// for example a quoted or relative path, or a pattern like "all" or "std"
+// that the go command expands to other packages.
+func checkImportPath(path string) error {
+	switch path {
+	case "all", "cmd", "std", "tool", "work":
+		return fmt.Errorf("%q is a package pattern of the go command, not an import path", path)
+	}
+	return module.CheckImportPath(path)
+}
+
+// Imports is a set of imports to be added to a Go source file.
+// A nil Imports is an empty set, Add and AddNamed make the map.
 //
 // Example:
 //
-//	imports := make(Imports)
-//	imports.Add(`"fmt"`)
-//	imports.Add(`"strings"`)
-//	imports.Add(`errors "github.com/pkg/errors"`)
-//	formatted, err := FormatFileWithImports(fset, source, imports)
-type Imports map[string]struct{}
+//	var imports Imports
+//	imports.Add("fmt")
+//	imports.AddNamed("errs", "github.com/domonda/go-errs")
+//	formatted, err := FormatSource(source, imports)
+type Imports map[Import]struct{}
 
-// Sorted returns all import lines sorted alphabetically.
-func (imports Imports) Sorted() []string {
-	sorted := make([]string, 0, len(imports))
-	for imp := range imports {
-		sorted = append(sorted, imp)
+// Add adds an import of the package with the import path
+// that uses the package name, like `import "fmt"`.
+func (imps *Imports) Add(path string) {
+	imps.AddNamed("", path)
+}
+
+// AddNamed adds an import of the package with the import path
+// that uses the import name, like `import errs "github.com/domonda/go-errs"`.
+// The name can also be "." or "_".
+func (imps *Imports) AddNamed(name, path string) {
+	if *imps == nil {
+		*imps = make(Imports)
 	}
-	sort.Strings(sorted)
-	return sorted
+	(*imps)[Import{Name: name, Path: path}] = struct{}{}
 }
 
-// Add adds an import line to the set.
-// The line should not include the "import" keyword.
-//
-// Examples:
-//
-//	imports.Add(`"fmt"`)
-//	imports.Add(`errors "github.com/pkg/errors"`)
-func (imports Imports) Add(line string) {
-	imports[line] = struct{}{}
+// Sorted returns the imports sorted by path and name.
+func (imps Imports) Sorted() []Import {
+	return slices.SortedFunc(maps.Keys(imps), func(a, b Import) int {
+		return cmp.Or(cmp.Compare(a.Path, b.Path), cmp.Compare(a.Name, b.Name))
+	})
 }
 
-// Remove removes an import line from the set.
-func (imports Imports) Remove(line string) {
-	delete(imports, line)
+// PackageLocation is the name and source directory of a Go package.
+type PackageLocation struct {
+	Name string // Package name like "fmt", can differ from the last element of the import path
+	Dir  string // Absolute path of the package source directory
+	Std  bool   // True for a standard library package
 }
 
-// Contains checks if an import line or path is in the set.
-// It matches both complete import lines and just the import path.
+// LocatePackages finds the name and source directory of the packages
+// with the import paths, resolved by the go command in the directory dir
+// with a single go list call. The result maps every import path to its location.
 //
-// Examples:
+// The import paths must not be quoted, relative like "./sub",
+// or patterns like "all" or "std" of the go command.
+// Returns an error that names every import path that can't be resolved,
+// for example if no required module provides the package,
+// or if the package has no Go files for the current platform.
 //
-//	imports.Add(`"fmt"`)
-//	imports.Contains(`"fmt"`)        // true
-//	imports.Contains("fmt")          // true (matches path)
-//	imports.Contains(`import "fmt"`) // true (strips "import" prefix)
-func (imports Imports) Contains(line string) bool {
-	if _, ok := imports[line]; ok {
-		return true
-	}
-	for imp := range imports {
-		_, importPath, err := ImportNameAndPathOfImportLine(imp)
-		if err == nil && importPath == line {
-			return true
+// Example:
+//
+//	locs, err := LocatePackages("/my/project", "fmt", "github.com/domonda/go-errs")
+//	// locs["fmt"].Name = "fmt"
+//	// locs["fmt"].Dir = "/usr/local/go/src/fmt"
+//	// locs["fmt"].Std = true
+//
+// The name that a file uses for an import is the explicit import name
+// or the package name:
+//
+//	imp, err := ImportOf(importSpec)
+//	...
+//	name := cmp.Or(imp.Name, locs[imp.Path].Name)
+func LocatePackages(dir string, importPaths ...string) (map[string]*PackageLocation, error) {
+	importPaths = slices.Compact(slices.Sorted(slices.Values(importPaths)))
+	var errs []error
+	for _, path := range importPaths {
+		if err := checkImportPath(path); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	_, importPath, err := ImportNameAndPathOfImportLine(line)
-	if err == nil && importPath != line {
-		return imports.Contains(importPath)
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
-	return false
-}
-
-// PackageLocation contains information about a Go package's location and name.
-type PackageLocation struct {
-	PkgName    string // The package name (e.g., "fmt", "errors")
-	SourcePath string // Absolute path to the package source directory
-	Std        bool   // True if this is a standard library package
-}
-
-// LocatePackage finds the source location and name of a package by its import path.
-// The projectDir is used as the context for resolving relative imports.
-//
-// Example:
-//
-//	loc, err := LocatePackage("/my/project", "fmt")
-//	// loc.PkgName = "fmt"
-//	// loc.SourcePath = "/usr/local/go/src/fmt"
-//	// loc.Std = true
-func LocatePackage(projectDir, importPath string) (*PackageLocation, error) {
-	if len(importPath) >= 2 && importPath[0] == '"' && importPath[len(importPath)-1] == '"' {
-		importPath = importPath[1 : len(importPath)-1]
+	locs := make(map[string]*PackageLocation, len(importPaths))
+	if len(importPaths) == 0 {
+		// packages.Load would load the package in dir without patterns
+		return locs, nil
 	}
+
 	config := packages.Config{
-		Mode: packages.NeedName + packages.NeedFiles,
-		Dir:  projectDir,
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedModule,
+		Dir:  dir,
 	}
-	pkgs, err := packages.Load(&config, importPath)
+	pkgs, err := packages.Load(&config, importPaths...)
 	if err != nil {
 		return nil, err
 	}
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("could not load importPath %q for projectDir %q", importPath, projectDir)
+	pkgsByPath := make(map[string]*packages.Package, len(pkgs))
+	for _, pkg := range pkgs {
+		pkgsByPath[pkg.PkgPath] = pkg
 	}
-	return &PackageLocation{
-		PkgName:    pkgs[0].Name,
-		SourcePath: filepath.Dir(pkgs[0].GoFiles[0]),
-		Std:        strings.HasPrefix(pkgs[0].GoFiles[0], build.Default.GOROOT),
-	}, nil
+	var goroot string // Read once for the first standard library candidate
+	for _, path := range importPaths {
+		pkg := pkgsByPath[path]
+		switch {
+		case pkg == nil:
+			errs = append(errs, fmt.Errorf("could not locate package %q in %s", path, dir))
+			continue
+		case len(pkg.GoFiles) == 0 && len(pkg.Errors) == 0:
+			// For example a directory with only test files
+			errs = append(errs, fmt.Errorf("could not locate package %q in %s: no Go files", path, dir))
+			continue
+		case len(pkg.GoFiles) == 0:
+			// packages.Load returns a package without files and with
+			// package errors for an import path it can't resolve
+			pkgErrs := make([]error, len(pkg.Errors))
+			for i, pkgErr := range pkg.Errors {
+				pkgErrs[i] = pkgErr
+			}
+			errs = append(errs, fmt.Errorf("could not locate package %q in %s: %w", path, dir, errors.Join(pkgErrs...)))
+			continue
+		}
+		pkgDir := filepath.Dir(pkg.GoFiles[0])
+		// Packages from GOROOT have no module and like for the go command
+		// the first element of a standard library import path has no dot.
+		// In GOPATH mode no package has a module, so such a package is only
+		// from the standard library if it's in the GOROOT of the go command.
+		firstPathElem, _, _ := strings.Cut(pkg.PkgPath, "/")
+		std := pkg.Module == nil && !strings.Contains(firstPathElem, ".")
+		if std {
+			if goroot == "" {
+				goroot, err = goEnvGOROOT(dir)
+				if err != nil {
+					return nil, err
+				}
+			}
+			rel, err := filepath.Rel(filepath.Join(goroot, "src"), pkgDir)
+			std = err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+		}
+		locs[path] = &PackageLocation{
+			Name: pkg.Name,
+			Dir:  pkgDir,
+			Std:  std,
+		}
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	return locs, nil
 }
 
-// LocatePackageOfImportLine parses an import line and locates the package.
-// Returns the import name (which may differ from package name for named imports)
-// and the package location.
+// goEnvGOROOT returns the GOROOT of the go command run in dir.
+// build.Default.GOROOT would be wrong for a tool built with -trimpath
+// or a toolchain selected by GOTOOLCHAIN.
+func goEnvGOROOT(dir string) (string, error) {
+	cmd := exec.Command("go", "env", "GOROOT")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("go env GOROOT: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// FormatSource formats Go source code like gofmt and adds the missing imports.
+//
+// If imports were added, all imports are grouped like goimports does:
+// standard library, third-party, and import paths starting with
+// one of the localImportPrefixes like "example.com/myproject".
+// Without added imports the result equals gofmt output,
+// existing import groups are not changed.
+//
+// Returns an error if the source is not valid Go or an import is invalid,
+// for example for a quoted path like `"fmt"` instead of fmt.
 //
 // Example:
 //
-//	name, loc, err := LocatePackageOfImportLine("/my/project", `errors "github.com/pkg/errors"`)
-//	// name = "errors" (the alias)
-//	// loc.PkgName = "errors" (the actual package name)
-func LocatePackageOfImportLine(projectDir, importLine string) (importName string, loc *PackageLocation, err error) {
-	var importPath string
-	importName, importPath, err = ImportNameAndPathOfImportLine(importLine)
-	if err != nil {
-		return "", nil, err
-	}
-	loc, err = LocatePackage(projectDir, importPath)
-	if err != nil {
-		return "", nil, err
-	}
-	if importName == "" {
-		importName = loc.PkgName
-	}
-	return importName, loc, nil
+//	var imports Imports
+//	imports.Add("fmt")
+//	imports.AddNamed("errs", "github.com/domonda/go-errs")
+//	formatted, err := FormatSource(source, imports, "example.com/myproject")
+//
+// Note: goimports reads the local import prefixes from the global variable
+// LocalPrefix of golang.org/x/tools/imports. FormatSource sets and restores it
+// while holding a mutex, other users of the variable are not synchronized.
+func FormatSource(source []byte, imps Imports, localImportPrefixes ...string) ([]byte, error) {
+	return formatSource(nextFileName(), source, imps, localImportPrefixes...)
 }
 
-// LocatePackageOfImportSpec locates the package referenced by an ast.ImportSpec.
-// Returns the import name and package location.
-//
-// Example:
-//
-//	// For: import errors "github.com/pkg/errors"
-//	name, loc, err := LocatePackageOfImportSpec("/my/project", importSpec)
-//	// name = "errors" (the alias from importSpec.Name)
-//	// loc.PkgName = "errors"
-func LocatePackageOfImportSpec(projectDir string, importSpec *ast.ImportSpec) (importName string, loc *PackageLocation, err error) {
-	loc, err = LocatePackage(projectDir, importSpec.Path.Value)
-	if err != nil {
-		return "", nil, err
-	}
-	importName = ExprString(importSpec.Name)
-	if importName == "" {
-		importName = loc.PkgName
-	}
-	return importName, loc, nil
-}
-
-// ImportNameAndPathOfImportLine splits an import line into its name and path components.
-// The import line should not include the "import" keyword (though it's stripped if present).
-//
-// Returns:
-//   - importName: The alias/name if explicitly specified, empty string otherwise
-//   - importPath: The import path without quotes
-//   - error: If the line is malformed
-//
-// Examples:
-//
-//	ImportNameAndPathOfImportLine(`"fmt"`)
-//	// returns: "", "fmt", nil
-//
-//	ImportNameAndPathOfImportLine(`errors "github.com/pkg/errors"`)
-//	// returns: "errors", "github.com/pkg/errors", nil
-//
-//	ImportNameAndPathOfImportLine(`. "github.com/onsi/ginkgo"`)
-//	// returns: ".", "github.com/onsi/ginkgo", nil
-func ImportNameAndPathOfImportLine(importLine string) (importName, importPath string, err error) {
-	importLine = strings.TrimPrefix(importLine, "import ")
-	begQuote := strings.IndexByte(importLine, '"')
-	endQuote := strings.LastIndexByte(importLine, '"')
-	if begQuote == -1 || begQuote == endQuote {
-		return "", "", fmt.Errorf("invalid quoted import: %s", importLine)
-	}
-	importPath = importLine[begQuote+1 : endQuote]
-	importName = strings.TrimSpace(importLine[:begQuote])
-	return importName, importPath, nil
-}
-
-// FormatFileWithImports formats source code and ensures specified imports are present.
-// It uses goimports-style formatting and grouping.
-//
-// Parameters:
-//   - fset: Token file set for position tracking
-//   - sourceCode: The Go source code to format
-//   - importLines: Set of imports to ensure are present
-//   - localImportPrefixes: Import path prefixes to group separately (e.g., "mycompany.com")
-//
-// The function:
-//   - Adds any missing imports from importLines
-//   - Formats the code with gofmt
-//   - Groups imports: standard library, third-party, local (by prefix)
-//   - Removes unused imports (via goimports)
-//
-// Example:
-//
-//	imports := make(Imports)
-//	imports.Add(`"fmt"`)
-//	imports.Add(`"github.com/pkg/errors"`)
-//	formatted, err := FormatFileWithImports(fset, source, imports, "mycompany.com")
-//
-// Note: This function uses a global mutex for thread-safety when setting
-// the LocalPrefix option in golang.org/x/tools/imports.
-func FormatFileWithImports(fset *token.FileSet, sourceCode []byte, importLines Imports, localImportPrefixes ...string) ([]byte, error) {
-	astFile, err := parser.ParseFile(fset, nextFileName(), sourceCode, parser.ParseComments|parser.AllErrors)
+// formatSource implements FormatSource
+// with filename used for the positions in errors.
+func formatSource(filename string, source []byte, imps Imports, localImportPrefixes ...string) ([]byte, error) {
+	// A FileSet of its own, so that repeated calls don't grow a caller's FileSet
+	localFset := token.NewFileSet()
+	astFile, err := parser.ParseFile(localFset, filename, source, parser.ParseComments|parser.AllErrors)
 	if err != nil {
 		return nil, err
 	}
-	for _, importLine := range importLines.Sorted() {
-		name, path, err := ImportNameAndPathOfImportLine(importLine)
+	importsAdded := false
+	for _, imp := range imps.Sorted() {
+		err = imp.check()
 		if err != nil {
 			return nil, err
 		}
-		astutil.AddNamedImport(fset, astFile, name, path)
+		if astutil.AddNamedImport(localFset, astFile, imp.Name, imp.Path) {
+			importsAdded = true
+		}
 	}
-	buf := bytes.NewBuffer(make([]byte, 0, len(sourceCode)*2))
-	err = format.Node(buf, fset, astFile)
+	buf := bytes.NewBuffer(make([]byte, 0, len(source)*2))
+	err = format.Node(buf, localFset, astFile)
 	if err != nil {
 		return nil, err
 	}
-	sourceCode = buf.Bytes()
+	if !importsAdded {
+		return buf.Bytes(), nil
+	}
+	source = buf.Bytes()
 
 	// TODO replace by something more efficient and elegant
 	// than re-parsing everything and using the global variable imports.LocalPrefix
 	importsLocalPrefixMtx.Lock()
 	defer importsLocalPrefixMtx.Unlock()
+	// Restore the global LocalPrefix for other users of golang.org/x/tools/imports
+	defer func(localPrefix string) { imports.LocalPrefix = localPrefix }(imports.LocalPrefix)
 	imports.LocalPrefix = strings.Join(localImportPrefixes, ",")
-	return imports.Process(nextFileName(), sourceCode, &imports.Options{Comments: true, FormatOnly: true})
+	return imports.Process(filename, source, &imports.Options{Comments: true, FormatOnly: true})
 }
 
 var importsLocalPrefixMtx sync.Mutex

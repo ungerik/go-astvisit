@@ -1,0 +1,33 @@
+name: Test
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+jobs:
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+  revive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Lint
+        run: go run github.com/mgechev/revive@v1.17.1 -config revive.toml -set_exit_status ./...
