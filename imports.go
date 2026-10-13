@@ -2,14 +2,16 @@ package astvisit
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
-	"go/build"
 	"go/format"
 	"go/parser"
 	"go/token"
+	"maps"
+	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -40,12 +42,7 @@ type Imports map[string]struct{}
 
 // Sorted returns all import lines sorted alphabetically.
 func (imports Imports) Sorted() []string {
-	sorted := make([]string, 0, len(imports))
-	for imp := range imports {
-		sorted = append(sorted, imp)
-	}
-	sort.Strings(sorted)
-	return sorted
+	return slices.Sorted(maps.Keys(imports))
 }
 
 // Add adds an import line to the set.
@@ -100,6 +97,10 @@ type PackageLocation struct {
 // LocatePackage finds the source location and name of a package by its import path.
 // The projectDir is used as the context for resolving relative imports.
 //
+// Returns an error if the import path can't be resolved,
+// for example if no required module provides the package,
+// or if the package has no Go files for the current platform.
+//
 // Example:
 //
 //	loc, err := LocatePackage("/my/project", "fmt")
@@ -111,7 +112,7 @@ func LocatePackage(projectDir, importPath string) (*PackageLocation, error) {
 		importPath = importPath[1 : len(importPath)-1]
 	}
 	config := packages.Config{
-		Mode: packages.NeedName + packages.NeedFiles,
+		Mode: packages.NeedName + packages.NeedFiles + packages.NeedModule,
 		Dir:  projectDir,
 	}
 	pkgs, err := packages.Load(&config, importPath)
@@ -121,11 +122,51 @@ func LocatePackage(projectDir, importPath string) (*PackageLocation, error) {
 	if len(pkgs) == 0 {
 		return nil, fmt.Errorf("could not load importPath %q for projectDir %q", importPath, projectDir)
 	}
+	// packages.Load returns a package without files and with
+	// package errors for an import path it can't resolve
+	if len(pkgs[0].GoFiles) == 0 {
+		if len(pkgs[0].Errors) == 0 {
+			// For example a directory with only test files
+			return nil, fmt.Errorf("could not load importPath %q for projectDir %q: no Go files", importPath, projectDir)
+		}
+		pkgErrs := make([]error, len(pkgs[0].Errors))
+		for i, pkgErr := range pkgs[0].Errors {
+			pkgErrs[i] = pkgErr
+		}
+		return nil, fmt.Errorf("could not load importPath %q for projectDir %q: no Go files: %w", importPath, projectDir, errors.Join(pkgErrs...))
+	}
+	sourcePath := filepath.Dir(pkgs[0].GoFiles[0])
+	// Packages from GOROOT have no module and like for the go command
+	// the first element of a standard library import path has no dot.
+	// In GOPATH mode no package has a module, so such a package is only
+	// from the standard library if it's in the GOROOT of the go command.
+	firstPathElem, _, _ := strings.Cut(pkgs[0].PkgPath, "/")
+	std := pkgs[0].Module == nil && !strings.Contains(firstPathElem, ".")
+	if std {
+		std, err = isInGOROOT(projectDir, sourcePath)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &PackageLocation{
 		PkgName:    pkgs[0].Name,
-		SourcePath: filepath.Dir(pkgs[0].GoFiles[0]),
-		Std:        strings.HasPrefix(pkgs[0].GoFiles[0], build.Default.GOROOT),
+		SourcePath: sourcePath,
+		Std:        std,
 	}, nil
+}
+
+// isInGOROOT reports if dir is within the GOROOT of the go command run in projectDir.
+// build.Default.GOROOT would be wrong for a tool built with -trimpath
+// or a toolchain selected by GOTOOLCHAIN.
+func isInGOROOT(projectDir, dir string) (bool, error) {
+	cmd := exec.Command("go", "env", "GOROOT")
+	cmd.Dir = projectDir
+	out, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("go env GOROOT: %w", err)
+	}
+	rel, err := filepath.Rel(filepath.Join(strings.TrimSpace(string(out)), "src"), dir)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
 }
 
 // LocatePackageOfImportLine parses an import line and locates the package.
@@ -205,10 +246,11 @@ func ImportNameAndPathOfImportLine(importLine string) (importName, importPath st
 }
 
 // FormatFileWithImports formats source code and ensures specified imports are present.
-// It uses goimports-style formatting and grouping.
+// It uses goimports-style formatting and grouping when imports are added.
 //
 // Parameters:
-//   - fset: Token file set for position tracking
+//   - fset: Not used, the source is parsed with a separate token.FileSet
+//     so that repeated calls don't grow fset
 //   - sourceCode: The Go source code to format
 //   - importLines: Set of imports to ensure are present
 //   - localImportPrefixes: Import path prefixes to group separately (e.g., "mycompany.com")
@@ -216,8 +258,11 @@ func ImportNameAndPathOfImportLine(importLine string) (importName, importPath st
 // The function:
 //   - Adds any missing imports from importLines
 //   - Formats the code with gofmt
-//   - Groups imports: standard library, third-party, local (by prefix)
-//   - Removes unused imports (via goimports)
+//   - If imports were added, groups imports with goimports:
+//     standard library, third-party, local (by prefix)
+//
+// Without added imports the result equals gofmt output,
+// existing import groups are not changed.
 //
 // Example:
 //
@@ -229,21 +274,34 @@ func ImportNameAndPathOfImportLine(importLine string) (importName, importPath st
 // Note: This function uses a global mutex for thread-safety when setting
 // the LocalPrefix option in golang.org/x/tools/imports.
 func FormatFileWithImports(fset *token.FileSet, sourceCode []byte, importLines Imports, localImportPrefixes ...string) ([]byte, error) {
-	astFile, err := parser.ParseFile(fset, nextFileName(), sourceCode, parser.ParseComments|parser.AllErrors)
+	return formatFileWithImports(nextFileName(), sourceCode, importLines, localImportPrefixes...)
+}
+
+// formatFileWithImports implements FormatFileWithImports
+// with filename used for the positions in errors.
+func formatFileWithImports(filename string, sourceCode []byte, importLines Imports, localImportPrefixes ...string) ([]byte, error) {
+	localFset := token.NewFileSet()
+	astFile, err := parser.ParseFile(localFset, filename, sourceCode, parser.ParseComments|parser.AllErrors)
 	if err != nil {
 		return nil, err
 	}
+	importsAdded := false
 	for _, importLine := range importLines.Sorted() {
 		name, path, err := ImportNameAndPathOfImportLine(importLine)
 		if err != nil {
 			return nil, err
 		}
-		astutil.AddNamedImport(fset, astFile, name, path)
+		if astutil.AddNamedImport(localFset, astFile, name, path) {
+			importsAdded = true
+		}
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, len(sourceCode)*2))
-	err = format.Node(buf, fset, astFile)
+	err = format.Node(buf, localFset, astFile)
 	if err != nil {
 		return nil, err
+	}
+	if !importsAdded {
+		return buf.Bytes(), nil
 	}
 	sourceCode = buf.Bytes()
 
@@ -251,8 +309,10 @@ func FormatFileWithImports(fset *token.FileSet, sourceCode []byte, importLines I
 	// than re-parsing everything and using the global variable imports.LocalPrefix
 	importsLocalPrefixMtx.Lock()
 	defer importsLocalPrefixMtx.Unlock()
+	// Restore the global LocalPrefix for other users of golang.org/x/tools/imports
+	defer func(localPrefix string) { imports.LocalPrefix = localPrefix }(imports.LocalPrefix)
 	imports.LocalPrefix = strings.Join(localImportPrefixes, ",")
-	return imports.Process(nextFileName(), sourceCode, &imports.Options{Comments: true, FormatOnly: true})
+	return imports.Process(filename, sourceCode, &imports.Options{Comments: true, FormatOnly: true})
 }
 
 var importsLocalPrefixMtx sync.Mutex

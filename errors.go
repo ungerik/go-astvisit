@@ -3,7 +3,9 @@ package astvisit
 import "errors"
 
 // ErrPackageNotFound is returned by ParsePackage when no Go source files
-// are found in the specified directory (after applying any filter function).
+// that are part of the build are found in the specified directory
+// (after applying any filter function). The Rewrite functions return it
+// for a directory path without "..." that has no such files.
 //
 // This error can be wrapped with additional context. Use errors.Is() to check:
 //
