@@ -29,6 +29,13 @@ func ExprString(expr ast.Expr) string {
 //
 //	// If expr is an exported Ident "Foo" and qualifyer is "pkg"
 //	ExprStringWithExportedNameQualifyer(expr, "pkg") // Returns: "pkg.Foo"
+//
+// Exported names in nested types like func, struct, and interface types
+// are qualified too, but not the names of fields, parameters, and methods.
+//
+// Without type information the keys of composite literals are qualified
+// like any other expression, which is correct for map literals,
+// but for struct literals produces invalid Go like "pkg.Foo{ pkg.Field: 1 }".
 func ExprStringWithExportedNameQualifyer(expr ast.Expr, qualifyer string) string {
 	return exprString(expr, qualifyer)
 }
@@ -54,7 +61,7 @@ func exprString(expr ast.Expr, qualifyer string) string {
 	case *ast.BasicLit:
 		return e.Value
 	case *ast.FuncLit:
-		return "func" + FuncTypeString(e.Type) + " { ... }"
+		return "func" + funcTypeString(e.Type, qualifyer) + " { ... }"
 	case *ast.CompositeLit:
 		if len(e.Elts) == 0 {
 			return exprString(e.Type, qualifyer) + "{}"
@@ -64,7 +71,7 @@ func exprString(expr ast.Expr, qualifyer string) string {
 		b.WriteString("{ ")
 		for i, elem := range e.Elts {
 			if i > 0 {
-				b.WriteString("; ")
+				b.WriteString(", ")
 			}
 			b.WriteString(exprString(elem, qualifyer))
 		}
@@ -106,6 +113,10 @@ func exprString(expr ast.Expr, qualifyer string) string {
 		b.WriteByte(']')
 		return b.String()
 	case *ast.TypeAssertExpr:
+		if e.Type == nil {
+			// Type switch guard
+			return exprString(e.X, qualifyer) + ".(type)"
+		}
 		return exprString(e.X, qualifyer) + ".(" + exprString(e.Type, qualifyer) + ")"
 	case *ast.CallExpr:
 		var b strings.Builder
@@ -145,39 +156,45 @@ func exprString(expr ast.Expr, qualifyer string) string {
 			if i > 0 {
 				b.WriteString("; ")
 			}
-			b.WriteString(FieldString(field))
+			b.WriteString(fieldString(field, qualifyer))
 		}
 		b.WriteString(" }")
 		return b.String()
 	case *ast.FuncType:
-		return "func" + FuncTypeString(e)
+		return "func" + funcTypeString(e, qualifyer)
 	case *ast.InterfaceType:
 		if e.Methods.NumFields() == 0 {
 			return "any" // "interface{}"
 		}
 		var b strings.Builder
-		b.WriteString("interface {")
+		b.WriteString("interface { ")
 		for i, method := range e.Methods.List {
 			if i > 0 {
 				b.WriteString("; ")
 			}
-			b.WriteString(FieldString(method))
+			if funcType, ok := method.Type.(*ast.FuncType); ok && len(method.Names) > 0 {
+				b.WriteString(method.Names[0].Name)
+				b.WriteString(funcTypeString(funcType, qualifyer))
+			} else {
+				// Embedded type or type constraint
+				b.WriteString(exprString(method.Type, qualifyer))
+			}
 		}
 		b.WriteString(" }")
 		return b.String()
 	case *ast.MapType:
 		return "map[" + exprString(e.Key, qualifyer) + "]" + exprString(e.Value, qualifyer)
 	case *ast.ChanType:
-		switch {
-		case e.Dir == ast.RECV && e.Begin == e.Arrow:
+		switch e.Dir {
+		case ast.RECV:
 			return "<-chan " + exprString(e.Value, qualifyer)
-		case e.Dir == ast.RECV && e.Begin < e.Arrow:
+		case ast.SEND:
 			return "chan<- " + exprString(e.Value, qualifyer)
-		case e.Dir == ast.SEND && e.Begin == e.Arrow:
-			return "->chan " + exprString(e.Value, qualifyer)
-		case e.Dir == ast.SEND && e.Begin < e.Arrow:
-			return "chan-> " + exprString(e.Value, qualifyer)
 		default:
+			// Without parentheses chan <-chan T would parse as chan<- chan T
+			if value, ok := e.Value.(*ast.ChanType); ok && value.Dir == ast.RECV {
+				return "chan (" + exprString(e.Value, qualifyer) + ")"
+			}
 			return "chan " + exprString(e.Value, qualifyer)
 		}
 	default:
@@ -185,7 +202,13 @@ func exprString(expr ast.Expr, qualifyer string) string {
 	}
 }
 
+// FieldString returns the names, type, and tag of a struct field,
+// parameter, or result, for example "x, y int" or "Name string `json:\"name\"`".
 func FieldString(field *ast.Field) string {
+	return fieldString(field, "")
+}
+
+func fieldString(field *ast.Field, qualifyer string) string {
 	var b strings.Builder
 	if len(field.Names) > 0 {
 		for i, name := range field.Names {
@@ -196,7 +219,7 @@ func FieldString(field *ast.Field) string {
 		}
 		b.WriteByte(' ')
 	}
-	b.WriteString(ExprString(field.Type))
+	b.WriteString(exprString(field.Type, qualifyer))
 	if field.Tag != nil {
 		b.WriteByte(' ')
 		b.WriteString(ExprString(field.Tag))
@@ -204,7 +227,13 @@ func FieldString(field *ast.Field) string {
 	return b.String()
 }
 
+// FuncTypeString returns the parameters and results of a function type
+// without the func keyword, for example "(x int, y string) error".
 func FuncTypeString(funcType *ast.FuncType) string {
+	return funcTypeString(funcType, "")
+}
+
+func funcTypeString(funcType *ast.FuncType, qualifyer string) string {
 	var b strings.Builder
 	b.WriteByte('(')
 	for fieldIndex, field := range funcType.Params.List {
@@ -220,7 +249,7 @@ func FuncTypeString(funcType *ast.FuncType) string {
 			}
 			b.WriteByte(' ')
 		}
-		b.WriteString(ExprString(field.Type))
+		b.WriteString(exprString(field.Type, qualifyer))
 	}
 	b.WriteByte(')')
 	if funcType.Results == nil || len(funcType.Results.List) == 0 {
@@ -228,7 +257,7 @@ func FuncTypeString(funcType *ast.FuncType) string {
 	}
 	b.WriteByte(' ')
 	if len(funcType.Results.List) == 1 && len(funcType.Results.List[0].Names) == 0 {
-		b.WriteString(ExprString(funcType.Results.List[0].Type))
+		b.WriteString(exprString(funcType.Results.List[0].Type, qualifyer))
 		return b.String()
 	}
 	b.WriteByte('(')
@@ -245,55 +274,25 @@ func FuncTypeString(funcType *ast.FuncType) string {
 			}
 			b.WriteByte(' ')
 		}
-		b.WriteString(ExprString(field.Type))
+		b.WriteString(exprString(field.Type, qualifyer))
 	}
 	b.WriteByte(')')
 	return b.String()
 }
 
-// TypeExprNameQualifyers sets all type name qualifyers (package names) at the massed map
+// TypeExprNameQualifyers sets all type name qualifyers (package names) at the passed map
 // that are used in any ast.SelectorExpr recursively found
 // within the passed type expression.
 func TypeExprNameQualifyers(expr ast.Expr, qualifyers map[string]struct{}) {
-	switch e := expr.(type) {
-	case *ast.Ident:
-		// Unqualified name
-	case *ast.SelectorExpr:
-		qualifyers[ExprString(e.X)] = struct{}{}
-	case *ast.IndexListExpr:
-		TypeExprNameQualifyers(e.X, qualifyers)
-		for _, index := range e.Indices {
-			TypeExprNameQualifyers(index, qualifyers)
-		}
-	case *ast.StarExpr:
-		TypeExprNameQualifyers(e.X, qualifyers)
-	case *ast.Ellipsis:
-		TypeExprNameQualifyers(e.Elt, qualifyers)
-	case *ast.ArrayType:
-		TypeExprNameQualifyers(e.Elt, qualifyers)
-	case *ast.StructType:
-		for _, f := range e.Fields.List {
-			TypeExprNameQualifyers(f.Type, qualifyers)
-		}
-	case *ast.CompositeLit:
-		for _, elt := range e.Elts {
-			TypeExprNameQualifyers(elt, qualifyers)
-		}
-	case *ast.MapType:
-		TypeExprNameQualifyers(e.Key, qualifyers)
-		TypeExprNameQualifyers(e.Value, qualifyers)
-	case *ast.ChanType:
-		TypeExprNameQualifyers(e.Value, qualifyers)
-	case *ast.FuncType:
-		for _, p := range e.Params.List {
-			TypeExprNameQualifyers(p.Type, qualifyers)
-		}
-		if e.Results != nil {
-			for _, r := range e.Results.List {
-				TypeExprNameQualifyers(r.Type, qualifyers)
-			}
-		}
-	default:
-		panic(fmt.Sprintf("UNSUPPORTED: %#v", expr))
+	if expr == nil {
+		return
 	}
+	ast.Inspect(expr, func(node ast.Node) bool {
+		sel, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		qualifyers[ExprString(sel.X)] = struct{}{}
+		return false
+	})
 }
