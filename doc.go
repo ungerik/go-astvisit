@@ -61,6 +61,10 @@
 //	        return modifiedSource, nil
 //	    })
 //
+// RewritePackages calls a function once per package with all parsed files
+// and their sources and writes the files of a package only if it succeeded.
+// RewriteDryRun returns the files that would be changed without writing them.
+//
 // # Node Replacements
 //
 // For precise source code modifications, use NodeReplacements:

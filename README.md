@@ -17,6 +17,20 @@ A type-safe visitor pattern implementation for traversing and modifying Go Abstr
 go get github.com/ungerik/go-astvisit
 ```
 
+## Documentation
+
+- [Tutorial: write your first codemod](docs/tutorial-write-a-codemod.md)
+- How-to guides:
+  [modify an AST with Cursor](docs/howto-modify-ast-with-cursor.md),
+  [rewrite Go source files](docs/howto-rewrite-source-files.md),
+  [check in CI that no file needs rewriting](docs/howto-check-generated-code-in-ci.md)
+- Explanation:
+  [why NodeReplacements edits source text](docs/explanation-text-replacements.md),
+  [how the Rewrite functions choose files and when they write](docs/explanation-file-selection-writes.md)
+- API reference: [pkg.go.dev](https://pkg.go.dev/github.com/ungerik/go-astvisit)
+
+All pages are listed in [docs/README.md](docs/README.md).
+
 ## Quick Start
 
 ### Basic Visitor Example
@@ -90,6 +104,55 @@ err := astvisit.Rewrite("./...", os.Stdout, nil,
     })
 ```
 
+Rewrite skips test files, files excluded from the build for every platform
+(like `//go:build ignore` generator files), and directories that the go command
+ignores for `./...` patterns (`testdata`, `vendor`, names starting with `.` or `_`,
+nested modules, and directories matching an `ignore` directive of `go.mod`)
+plus `node_modules`. A directory that is passed explicitly as path is never skipped,
+and an `ignore` directive that matches it doesn't apply to its subdirectories either.
+A file that is passed explicitly as path is rewritten even if it is
+excluded from the build, like the go command does for files named on the command line.
+The files of a package are written only after the callback succeeded for all of them,
+and only if their content changed. CRLF line endings of a file are kept.
+
+`RewriteWithReplacements` applies `NodeReplacements` and `Imports` returned per file
+to the parsed source and formats the result. A file is left unchanged if the result
+only differs in formatting from the source. With `debug` set, the replacements are
+written with conflict-style markers to `resultOut`, which must not be nil,
+and no files are changed.
+
+#### Package-Level Rewriting
+
+`RewritePackages` calls the callback once per package with all parsed files,
+their sources and the `token.FileSet`, and writes the returned files
+only if the callback succeeded:
+
+```go
+err := astvisit.RewritePackages("./...", os.Stdout, nil,
+    func(pkg *astvisit.ParsedPackage, verboseOut io.Writer) (map[string][]byte, error) {
+        rewritten := make(map[string][]byte)
+        for _, filePath := range pkg.FilePaths {
+            // Use pkg.Files[filePath], pkg.Sources[filePath], pkg.Fset
+            // and set rewritten[filePath] for changed files
+        }
+        return rewritten, nil
+    })
+```
+
+#### Dry-Run for CI
+
+`RewriteDryRun` returns the files that would be changed without writing them.
+Per file callbacks can be converted with `RewriteFileFunc.PackageFunc`
+and `FileReplacementsFunc.PackageFunc`:
+
+```go
+changedFiles, err := astvisit.RewriteDryRun("./...", nil,
+    astvisit.FileReplacementsFunc(myReplacementsFunc).PackageFunc())
+if len(changedFiles) > 0 {
+    // Generated code is outdated
+}
+```
+
 ## Core Concepts
 
 ### Visitor Interface
@@ -108,6 +171,9 @@ type Visitor interface {
 Each method returns `bool`:
 - `true`: Continue visiting child nodes
 - `false`: Skip child nodes
+
+Nodes of a type without a `Visitor` method are skipped by `Visit` together with their children.
+Currently that is only `*ast.Directive` (added in Go 1.26), which is never part of a parsed file.
 
 ### Cursor Interface
 
@@ -166,6 +232,11 @@ replacements.AddRemoval(node, "removed-unused")
 newSource, err := replacements.Apply(fset, originalSource)
 ```
 
+Replacements are applied in source order. Replacements at the same position,
+like several insertions after the same node, are applied in the order they were added.
+Overlapping replacements and nodes that are not from the parsed source,
+like nodes of another file or without a position, return an error.
+
 ### Import Management
 
 Format source with specific imports:
@@ -177,6 +248,9 @@ imports.Add(`math "math/big"`)  // Named import
 
 formatted, err := astvisit.FormatFileWithImports(fset, source, imports, "mycompany.com")
 ```
+
+If imports were added, they are grouped goimports-style,
+else the result is the same as gofmt output.
 
 ### Parsing Utilities
 
@@ -196,6 +270,9 @@ stmts, comments, err := astvisit.ParseStatements(fset, `
 // Parse full package
 pkg, err := astvisit.ParsePackage(fset, "./mypackage", nil)
 ```
+
+`ParsePackage` skips files that are excluded from the build for every GOOS/GOARCH,
+like `//go:build ignore` generator files, and returns main packages like any other package.
 
 ### Converting AST to Strings
 
