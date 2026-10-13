@@ -25,8 +25,9 @@ type Path []PathItem
 
 func (s *Path) push(parentField string, parentFieldIndex int, node ast.Node) {
 	item := PathItem{
-		Node: node,
-		Type: NodeType(node),
+		ParentFieldIndex: -1, // The root node has no parent field
+		Node:             node,
+		Type:             NodeType(node),
 	}
 
 	if len(*s) > 0 {

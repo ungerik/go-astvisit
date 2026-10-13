@@ -1,7 +1,6 @@
 package astvisit
 
 import (
-	"fmt"
 	"go/ast"
 
 	"golang.org/x/tools/go/ast/astutil"
@@ -20,7 +19,11 @@ import (
 // The pre visitor is called in pre-order (parent before children) and can prevent
 // traversal of child nodes by returning false. The post visitor is called in
 // post-order (children before parent) and receives the node after all children
-// have been visited.
+// have been visited. The result of the post visitor is ignored,
+// because the children of the node have already been visited.
+// The post visitor is not called for nodes where the pre visitor returned false.
+// Nodes of a type without a Visitor method, like *ast.Directive,
+// are skipped with their children, because astutil.Apply may not support them.
 //
 // Example:
 //
@@ -38,20 +41,28 @@ import (
 //	astvisit.Visit(file, counter, nil)
 //	fmt.Printf("Found %d functions\n", counter.count)
 func Visit(root ast.Node, pre, post Visitor) (result ast.Node) {
+	result = root // Changed by Cursor.Replace of the root node
 	path := make(Path, 0, 16)
 	preApply := func(c *astutil.Cursor) bool {
 		path.push(c.Name(), c.Index(), c.Node())
 		// if c.Node() != nil {
 		// 	fmt.Println(path)
 		// }
-		return visitNode(pre, newCursor(c, path))
+		if !visitNode(pre, newCursor(c, path, &result)) {
+			// astutil.Apply doesn't call postApply for the node
+			path.pop()
+			return false
+		}
+		return true
 	}
 	postApply := func(c *astutil.Cursor) bool {
-		result := visitNode(post, newCursor(c, path))
+		visitNode(post, newCursor(c, path, &result))
 		path.pop()
-		return result
+		// Returning false would make astutil.Apply abort the whole traversal
+		return true
 	}
-	return astutil.Apply(root, preApply, postApply)
+	astutil.Apply(root, preApply, postApply)
+	return result
 }
 
 func visitNode(visitor Visitor, cursor Cursor) bool {
@@ -232,5 +243,8 @@ func visitNode(visitor Visitor, cursor Cursor) bool {
 		return visitor.VisitPackage(x, cursor)
 	}
 
-	panic(fmt.Sprintf("unknown ast.Node type %T", cursor.Node()))
+	// A node type without a Visitor method, like *ast.Directive, has no method
+	// to call and astutil.Apply panics when it descends into a node type
+	// it doesn't support, so its children are not traversed
+	return false
 }

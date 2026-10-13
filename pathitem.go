@@ -10,6 +10,7 @@ import (
 // It captures the relationship between a node and its parent.
 //
 // Example PathItem values:
+//
 //   - ParentField: "Body", ParentFieldIndex: -1, Node: *ast.BlockStmt, Type: "BlockStmt"
 //     Represents a single (non-slice) field named "Body" containing a BlockStmt
 //
@@ -32,7 +33,7 @@ type PathItem struct {
 	Type string
 }
 
-func (item *PathItem) writeTo(b *strings.Builder) {
+func (item PathItem) writeTo(b *strings.Builder) {
 	if item.ParentField != "" {
 		b.WriteByte('.')
 		b.WriteString(item.ParentField)
@@ -50,7 +51,7 @@ func (item *PathItem) writeTo(b *strings.Builder) {
 // Format examples:
 //   - ".Body/BlockStmt" (single field)
 //   - ".List[2]/ReturnStmt" (slice element at index 2)
-func (item *PathItem) String() string {
+func (item PathItem) String() string {
 	b := strings.Builder{}
 	item.writeTo(&b)
 	return b.String()
